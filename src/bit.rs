@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use crate::bitvalue::BitValue;
 use crate::primitivetype::{PrimitiveType, DISCRIMINANT_BIT_COUNT, DISCRIMINANT_MASK};
 
@@ -223,8 +225,15 @@ impl PartialEq<Bit> for BitValue {
     }
 }
 
+impl Hash for Bit {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get().hash(state);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
     use crate::Bit;
@@ -309,5 +318,21 @@ mod tests {
         assert!(bit1 == &One);
         assert!(One == bit1);
         assert!(&One == bit1);
+    }
+
+    #[test]
+    fn hash() {
+        fn hash_value<H: Hash>(h: H) -> u64 {
+            let mut s = std::collections::hash_map::DefaultHasher::new();
+            h.hash(&mut s);
+            s.finish()
+        }
+
+        let x = 0b10u8;
+        let bit0 = Bit::new_ref(&x, 0);
+        let bit1 = Bit::new_ref(&x, 1);
+
+        assert_eq!(hash_value(bit0), hash_value(Zero));
+        assert_eq!(hash_value(bit1), hash_value(One));
     }
 }
