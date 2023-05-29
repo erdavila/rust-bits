@@ -27,6 +27,7 @@ use crate::primitivetype::{PrimitiveType, DISCRIMINANT_BIT_COUNT, DISCRIMINANT_M
 /// [`set`]: Bit::set
 /// [`modify`]: Bit::modify
 #[repr(C)]
+#[derive(Eq)]
 pub struct Bit {
     _unsized: [()],
 }
@@ -192,6 +193,36 @@ impl<P: PrimitiveType> Mask<P> {
     }
 }
 
+impl PartialEq for Bit {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl PartialEq<BitValue> for Bit {
+    fn eq(&self, other: &BitValue) -> bool {
+        self.get() == *other
+    }
+}
+
+impl PartialEq<BitValue> for &Bit {
+    fn eq(&self, other: &BitValue) -> bool {
+        self.get() == *other
+    }
+}
+
+impl PartialEq<&Bit> for BitValue {
+    fn eq(&self, other: &&Bit) -> bool {
+        *self == other.get()
+    }
+}
+
+impl PartialEq<Bit> for BitValue {
+    fn eq(&self, other: &Bit) -> bool {
+        *self == other.get()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Not;
@@ -253,5 +284,30 @@ mod tests {
         let mut p = 0b_11110000_10010011_u16;
 
         Bit::new_mut(&mut p, 16);
+    }
+
+    #[test]
+    fn eq() {
+        let x = 0b1010u8;
+        let bit0 = Bit::new_ref(&x, 0);
+        let bit1 = Bit::new_ref(&x, 1);
+        let bit2 = Bit::new_ref(&x, 2);
+        let bit3 = Bit::new_ref(&x, 3);
+
+        assert!(bit0 == bit0);
+        assert!(bit0 == bit2);
+        assert!(bit0 == Zero);
+        assert!(bit0 == &Zero);
+        assert!(Zero == bit0);
+        assert!(&Zero == bit0);
+
+        assert!(bit0 != bit1);
+
+        assert!(bit1 == bit1);
+        assert!(bit1 == bit3);
+        assert!(bit1 == One);
+        assert!(bit1 == &One);
+        assert!(One == bit1);
+        assert!(&One == bit1);
     }
 }
