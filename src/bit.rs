@@ -1,7 +1,8 @@
 use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
-use crate::primitivetype::{PrimitiveType, DISCRIMINANT_BIT_COUNT, DISCRIMINANT_MASK};
+use crate::primitivetype::PrimitiveType;
+use crate::refs::DstRefParts;
 
 /// Representation of a reference to a single bit in a [primitive].
 ///
@@ -41,6 +42,7 @@ impl Bit {
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
     pub fn new_ref<P: PrimitiveType>(p: &P, bit_index: usize) -> &Self {
+        assert!(bit_index < P::BIT_COUNT, "invalid bit index");
         let parts = DstRefParts::new(p, bit_index);
         unsafe { std::mem::transmute(parts) }
     }
@@ -51,6 +53,7 @@ impl Bit {
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
     pub fn new_mut<P: PrimitiveType>(p: &mut P, bit_index: usize) -> &mut Self {
+        assert!(bit_index < P::BIT_COUNT, "invalid bit index");
         let parts = DstRefParts::new(p, bit_index);
         unsafe { std::mem::transmute(parts) }
     }
@@ -150,30 +153,6 @@ unsafe fn raw_ptr_to_ref<'a, P: PrimitiveType>(ptr: *const ()) -> &'a P {
 
 unsafe fn raw_ptr_to_mut<'a, P: PrimitiveType>(ptr: *const ()) -> &'a mut P {
     &mut *(ptr as *mut P)
-}
-
-#[repr(C)]
-struct DstRefParts {
-    ptr: *const (),
-    metadata: usize,
-}
-
-impl DstRefParts {
-    fn new<P: PrimitiveType>(ptr: *const P, bit_index: usize) -> Self {
-        assert!(bit_index < P::BIT_COUNT, "invalid bit index");
-        DstRefParts {
-            ptr: ptr as _,
-            metadata: (bit_index << DISCRIMINANT_BIT_COUNT) | (P::DISCRIMINANT & DISCRIMINANT_MASK),
-        }
-    }
-
-    fn discriminant(&self) -> usize {
-        self.metadata & DISCRIMINANT_MASK
-    }
-
-    fn bit_index(&self) -> usize {
-        self.metadata >> DISCRIMINANT_BIT_COUNT
-    }
 }
 
 struct Mask<P: PrimitiveType>(P);

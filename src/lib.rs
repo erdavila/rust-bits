@@ -19,11 +19,14 @@ mod bitsource;
 mod bitstr;
 mod bitstring;
 mod bitvalue;
+mod primitive;
 mod primitivetype;
+mod refs;
 
 pub use bit::*;
 pub use bitsource::*;
 pub use bitstr::*;
 pub use bitstring::*;
 pub use bitvalue::*;
+pub use primitive::*;
 pub use primitivetype::*;
