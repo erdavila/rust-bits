@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
 use crate::primitivetype::PrimitiveType;
-use crate::refs::DstRefParts;
+use crate::refs::DstRefRepr;
 
 /// Representation of a reference to a single bit in a [primitive].
 ///
@@ -42,8 +42,7 @@ impl Bit {
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
     pub fn new_ref<P: PrimitiveType>(p: &P, bit_index: usize) -> &Self {
-        assert!(bit_index < P::BIT_COUNT, "invalid bit index");
-        let parts = DstRefParts::new(p, bit_index);
+        let parts = DstRefRepr::new(std::slice::from_ref(p), bit_index, 1);
         unsafe { std::mem::transmute(parts) }
     }
 
@@ -53,20 +52,19 @@ impl Bit {
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
     pub fn new_mut<P: PrimitiveType>(p: &mut P, bit_index: usize) -> &mut Self {
-        assert!(bit_index < P::BIT_COUNT, "invalid bit index");
-        let parts = DstRefParts::new(p, bit_index);
+        let parts = DstRefRepr::new(std::slice::from_ref(p), bit_index, 1);
         unsafe { std::mem::transmute(parts) }
     }
 
     /// Gets the value of the referenced bit.
     pub fn get(&self) -> BitValue {
-        fn get<P: PrimitiveType>(parts: DstRefParts) -> BitValue {
-            let p = unsafe { raw_ptr_to_ref(parts.ptr) };
-            let mask = Mask::<P>::new(parts.bit_index());
+        fn get<P: PrimitiveType>(parts: DstRefRepr) -> BitValue {
+            let p = unsafe { parts.get_ref() };
+            let mask = Mask::<P>::new(parts.offset());
             mask.get_bit_value(p)
         }
 
-        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
 
         match parts.discriminant() {
             usize::DISCRIMINANT => get::<usize>(parts),
@@ -83,15 +81,15 @@ impl Bit {
     ///
     /// It returns the previous value.
     pub fn set(&mut self, value: BitValue) -> BitValue {
-        fn set<P: PrimitiveType>(value: BitValue, parts: DstRefParts) -> BitValue {
-            let p = unsafe { raw_ptr_to_mut::<P>(parts.ptr) };
-            let mask = Mask::<P>::new(parts.bit_index());
+        fn set<P: PrimitiveType>(value: BitValue, parts: DstRefRepr) -> BitValue {
+            let p = unsafe { parts.get_mut() };
+            let mask = Mask::<P>::new(parts.offset());
             let previous_value = mask.get_bit_value(p);
             mask.set_bit_value(p, value);
             previous_value
         }
 
-        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
 
         match parts.discriminant() {
             usize::DISCRIMINANT => set::<usize>(value, parts),
@@ -125,15 +123,15 @@ impl Bit {
     where
         F: FnOnce(BitValue) -> BitValue,
     {
-        fn modify<P: PrimitiveType>(f: impl FnOnce(BitValue) -> BitValue, parts: DstRefParts) {
-            let p = unsafe { raw_ptr_to_mut::<P>(parts.ptr) };
-            let mask = Mask::<P>::new(parts.bit_index());
+        fn modify<P: PrimitiveType>(f: impl FnOnce(BitValue) -> BitValue, parts: DstRefRepr) {
+            let p = unsafe { parts.get_mut() };
+            let mask = Mask::<P>::new(parts.offset());
             let previous_value = mask.get_bit_value(p);
             let new_value = f(previous_value);
             mask.set_bit_value(p, new_value);
         }
 
-        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
 
         match parts.discriminant() {
             usize::DISCRIMINANT => modify::<usize>(f, parts),
@@ -145,14 +143,6 @@ impl Bit {
             _ => unreachable!(),
         }
     }
-}
-
-unsafe fn raw_ptr_to_ref<'a, P: PrimitiveType>(ptr: *const ()) -> &'a P {
-    &*(ptr as *const P)
-}
-
-unsafe fn raw_ptr_to_mut<'a, P: PrimitiveType>(ptr: *const ()) -> &'a mut P {
-    &mut *(ptr as *mut P)
 }
 
 struct Mask<P: PrimitiveType>(P);
@@ -259,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid bit index")]
+    #[should_panic(expected = "invalid bit offset")]
     fn new_ref_invalid_bit_index() {
         let p = 0b_11110000_10010011_u16;
 
@@ -267,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid bit index")]
+    #[should_panic(expected = "invalid bit offset")]
     fn new_mut_invalid_bit_index() {
         let mut p = 0b_11110000_10010011_u16;
 

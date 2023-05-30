@@ -1,10 +1,6 @@
 use std::fmt::{LowerHex, UpperHex};
 use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, ShlAssign, ShrAssign};
 
-pub(crate) const DISCRIMINANT_BIT_COUNT: usize = 3;
-
-pub(crate) const DISCRIMINANT_MASK: usize = 0b0111;
-
 pub trait PrimitiveType: Copy + PartialEq + LowerHex + UpperHex
 where
     Self: Not<Output = Self>,

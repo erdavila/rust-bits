@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use crate::refs::DstRefParts;
+use crate::refs::DstRefRepr;
 use crate::PrimitiveType;
 
 /// Representation of a reference to a [primitive] composed by contiguous bits
@@ -48,12 +48,7 @@ impl<P: PrimitiveType> Primitive<P> {
     /// let _: &Primitive<u16> = Primitive::new_ref(&underlying, 4);
     /// ```
     pub fn new_ref<U: PrimitiveType>(under: &[U], first_bit_index: usize) -> &Self {
-        assert!(
-            first_bit_index + P::BIT_COUNT <= under.len() * U::BIT_COUNT,
-            "invalid first bit index"
-        );
-        // TODO: normalize
-        let parts = DstRefParts::new(&under[0], first_bit_index);
+        let parts = DstRefRepr::new(under, first_bit_index, P::BIT_COUNT);
         unsafe { std::mem::transmute(parts) }
     }
 
@@ -71,24 +66,19 @@ impl<P: PrimitiveType> Primitive<P> {
     /// let _: &mut Primitive<u16> = Primitive::new_mut(&mut underlying, 4);
     /// ```
     pub fn new_mut<U: PrimitiveType>(under: &mut [U], first_bit_index: usize) -> &mut Self {
-        assert!(
-            first_bit_index + P::BIT_COUNT <= under.len() * U::BIT_COUNT,
-            "invalid first bit index"
-        );
-        // TODO: normalize
-        let parts = DstRefParts::new(&under[0], first_bit_index);
+        let parts = DstRefRepr::new(under, first_bit_index, P::BIT_COUNT);
         unsafe { std::mem::transmute(parts) }
     }
 
     /// Gets the value of the referenced primitive.
     pub fn get(&self) -> P {
-        fn get<P: PrimitiveType, U: PrimitiveType>(parts: DstRefParts) -> P {
-            let ptr = parts.ptr.cast();
-            let access = PrimitiveAccess::<P, U>::new(parts.bit_index());
+        fn get<P: PrimitiveType, U: PrimitiveType>(parts: DstRefRepr) -> P {
+            let ptr = parts.ptr();
+            let access = PrimitiveAccess::<P, U>::new(parts.offset());
             access.get_primitive(ptr)
         }
 
-        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
 
         match parts.discriminant() {
             usize::DISCRIMINANT => get::<P, usize>(parts),
@@ -105,15 +95,15 @@ impl<P: PrimitiveType> Primitive<P> {
     ///
     /// It returns the previous value.
     pub fn set(&mut self, value: P) -> P {
-        fn set<P: PrimitiveType, U: PrimitiveType>(value: P, parts: DstRefParts) -> P {
-            let ptr = parts.ptr as *mut U;
-            let access = PrimitiveAccess::<P, U>::new(parts.bit_index());
+        fn set<P: PrimitiveType, U: PrimitiveType>(value: P, parts: DstRefRepr) -> P {
+            let ptr = parts.mut_ptr();
+            let access = PrimitiveAccess::<P, U>::new(parts.offset());
             let previous_value = access.get_primitive(ptr);
             access.set_primitive(ptr, value);
             previous_value
         }
 
-        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
 
         match parts.discriminant() {
             usize::DISCRIMINANT => set::<P, usize>(value, parts),
@@ -147,15 +137,15 @@ impl<P: PrimitiveType> Primitive<P> {
     where
         F: FnOnce(P) -> P,
     {
-        fn modify<P: PrimitiveType, U: PrimitiveType>(f: impl FnOnce(P) -> P, parts: DstRefParts) {
-            let ptr = parts.ptr as *mut U;
-            let access = PrimitiveAccess::<P, U>::new(parts.bit_index());
+        fn modify<P: PrimitiveType, U: PrimitiveType>(f: impl FnOnce(P) -> P, parts: DstRefRepr) {
+            let ptr = parts.mut_ptr();
+            let access = PrimitiveAccess::<P, U>::new(parts.offset());
             let previous_value = access.get_primitive(ptr);
             let new_value = f(previous_value);
             access.set_primitive(ptr, new_value);
         }
 
-        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
 
         match parts.discriminant() {
             usize::DISCRIMINANT => modify::<P, usize>(f, parts),
@@ -397,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid first bit index")]
+    #[should_panic(expected = "invalid bit offset")]
     fn new_ref_invalid_first_bit_index_contained() {
         let under: [u16; 1] = [0b_11110000_10010011];
 
@@ -405,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid first bit index")]
+    #[should_panic(expected = "invalid bit offset")]
     fn new_ref_invalid_first_bit_index_across() {
         let under: [u8; 3] = [0xBA, 0xDC, 0xFE];
 
@@ -413,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid first bit index")]
+    #[should_panic(expected = "invalid bit offset")]
     fn new_mut_invalid_first_bit_index_contained() {
         let mut under: [u16; 1] = [0b_11110000_10010011];
 
@@ -421,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid first bit index")]
+    #[should_panic(expected = "invalid bit offset")]
     fn new_mut_invalid_first_bit_index_across() {
         let mut under: [u8; 3] = [0xBA, 0xDC, 0xFE];
 

@@ -1,24 +1,48 @@
-use crate::primitivetype::{PrimitiveType, DISCRIMINANT_BIT_COUNT, DISCRIMINANT_MASK};
+use crate::primitivetype::PrimitiveType;
+
+const DISCRIMINANT_MASK: usize = 0b0111;
+const DISCRIMINANT_BIT_COUNT: usize = 3;
 
 #[repr(C)]
-pub(crate) struct DstRefParts {
-    pub(crate) ptr: *const (),
+pub(crate) struct DstRefRepr {
+    ptr: *const (),
     metadata: usize,
 }
 
-impl DstRefParts {
-    pub(crate) fn new<P: PrimitiveType>(ptr: *const P, bit_index: usize) -> Self {
-        DstRefParts {
-            ptr: ptr as _,
-            metadata: (bit_index << DISCRIMINANT_BIT_COUNT) | (P::DISCRIMINANT & DISCRIMINANT_MASK),
+impl DstRefRepr {
+    pub(crate) fn new<P: PrimitiveType>(p: &[P], offset: usize, bit_count: usize) -> Self {
+        assert!(
+            offset + bit_count <= p.len() * P::BIT_COUNT,
+            "invalid bit offset"
+        );
+        // TODO: normalize
+        DstRefRepr {
+            ptr: p.as_ptr().cast(),
+            metadata: (offset << DISCRIMINANT_BIT_COUNT) | (P::DISCRIMINANT & DISCRIMINANT_MASK),
         }
+    }
+
+    pub(crate) fn ptr<P: PrimitiveType>(&self) -> *const P {
+        self.ptr as _
+    }
+
+    pub(crate) fn mut_ptr<P: PrimitiveType>(&self) -> *mut P {
+        self.ptr as _
+    }
+
+    pub(crate) unsafe fn get_ref<'a, P: PrimitiveType>(&self) -> &'a P {
+        &*(self.ptr as *const P)
+    }
+
+    pub(crate) unsafe fn get_mut<'a, P: PrimitiveType>(&self) -> &'a mut P {
+        &mut *(self.ptr as *mut P)
     }
 
     pub(crate) fn discriminant(&self) -> usize {
         self.metadata & DISCRIMINANT_MASK
     }
 
-    pub(crate) fn bit_index(&self) -> usize {
+    pub(crate) fn offset(&self) -> usize {
         self.metadata >> DISCRIMINANT_BIT_COUNT
     }
 }
