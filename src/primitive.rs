@@ -16,9 +16,14 @@ use crate::PrimitiveType;
 /// ```
 /// use rust_bits::Primitive;
 ///
-/// let underlying: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: 0xFEDCBA
+/// let mut underlying: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: 0xFEDCBA
+///
 /// let u16_ref: &Primitive<u16> = Primitive::new_ref(&underlying, 4);
 /// assert_eq!(u16_ref.get(), 0xEDCBu16);
+///
+/// let u16_ref: &mut Primitive<u16> = Primitive::new_mut(&mut underlying, 4);
+/// u16_ref.set(0x1234);
+/// assert_eq!(underlying, [0x4A, 0x23, 0xF1]);
 /// ```
 ///
 /// [primitive]: PrimitiveType
@@ -95,6 +100,73 @@ impl<P: PrimitiveType> Primitive<P> {
             _ => unreachable!(),
         }
     }
+
+    /// Sets the value of the referenced primitive.
+    ///
+    /// It returns the previous value.
+    pub fn set(&mut self, value: P) -> P {
+        fn set<P: PrimitiveType, U: PrimitiveType>(value: P, parts: DstRefParts) -> P {
+            let ptr = parts.ptr as *mut U;
+            let access = PrimitiveAccess::<P, U>::new(parts.bit_index());
+            let previous_value = access.get_primitive(ptr);
+            access.set_primitive(ptr, value);
+            previous_value
+        }
+
+        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+
+        match parts.discriminant() {
+            usize::DISCRIMINANT => set::<P, usize>(value, parts),
+            u8::DISCRIMINANT => set::<P, u8>(value, parts),
+            u16::DISCRIMINANT => set::<P, u16>(value, parts),
+            u32::DISCRIMINANT => set::<P, u32>(value, parts),
+            u64::DISCRIMINANT => set::<P, u64>(value, parts),
+            u128::DISCRIMINANT => set::<P, u128>(value, parts),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Allows retrieving and setting the referenced primitive value in a single
+    /// operation.
+    ///
+    /// The passed closure receives the current value and must return the new value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rust_bits::Primitive;
+    /// use std::ops::Not;
+    ///
+    /// let mut underlying: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: 0xFEDCBA
+    ///
+    /// let u16_ref: &mut Primitive<u16> = Primitive::new_mut(&mut underlying, 4);
+    /// u16_ref.modify(Not::not);
+    /// assert_eq!(underlying, [0x4A, 0x23, 0xF1]); // In memory: 0xF1234A
+    /// ```
+    pub fn modify<F>(&mut self, f: F)
+    where
+        F: FnOnce(P) -> P,
+    {
+        fn modify<P: PrimitiveType, U: PrimitiveType>(f: impl FnOnce(P) -> P, parts: DstRefParts) {
+            let ptr = parts.ptr as *mut U;
+            let access = PrimitiveAccess::<P, U>::new(parts.bit_index());
+            let previous_value = access.get_primitive(ptr);
+            let new_value = f(previous_value);
+            access.set_primitive(ptr, new_value);
+        }
+
+        let parts: DstRefParts = unsafe { std::mem::transmute(self) };
+
+        match parts.discriminant() {
+            usize::DISCRIMINANT => modify::<P, usize>(f, parts),
+            u8::DISCRIMINANT => modify::<P, u8>(f, parts),
+            u16::DISCRIMINANT => modify::<P, u16>(f, parts),
+            u32::DISCRIMINANT => modify::<P, u32>(f, parts),
+            u64::DISCRIMINANT => modify::<P, u64>(f, parts),
+            u128::DISCRIMINANT => modify::<P, u128>(f, parts),
+            _ => unreachable!(),
+        }
+    }
 }
 
 struct PrimitiveAccess<P: PrimitiveType, U: PrimitiveType> {
@@ -128,6 +200,21 @@ impl<P: PrimitiveType, U: PrimitiveType> PrimitiveAccess<P, U> {
 
         resolved.bits
     }
+
+    fn set_primitive(&self, mut ptr: *mut U, value: P) {
+        let mut available = CountedBits::new(value);
+        let mut destination = MaskedBits::with_offset(unsafe { &mut *ptr }, self.offset);
+
+        while available.count > 0 {
+            if destination.is_full() {
+                ptr = unsafe { ptr.add(1) };
+                destination = MaskedBits::new(unsafe { &mut *ptr });
+            }
+
+            let transfered = available.pop_lsb_at_most::<U>(destination.room());
+            destination.set_next(transfered);
+        }
+    }
 }
 
 struct CountedBits<P: PrimitiveType> {
@@ -155,8 +242,12 @@ impl<P: PrimitiveType> CountedBits<P> {
     }
 
     fn pop_lsb<T: PrimitiveType>(&mut self) -> CountedBits<T> {
+        self.pop_lsb_at_most(T::BIT_COUNT)
+    }
+
+    fn pop_lsb_at_most<T: PrimitiveType>(&mut self, at_most: usize) -> CountedBits<T> {
         let value = T::from_usize(self.bits.to_usize());
-        let count = [self.count, T::BIT_COUNT, usize::BIT_COUNT]
+        let count = [self.count, at_most, <usize as PrimitiveType>::BIT_COUNT]
             .into_iter()
             .min()
             .unwrap_or_default();
@@ -180,8 +271,61 @@ impl<P: PrimitiveType> Debug for CountedBits<P> {
     }
 }
 
+struct MaskedBits<'a, P: PrimitiveType> {
+    bits: &'a mut P,
+    offset: usize,
+}
+
+impl<'a, P: PrimitiveType> MaskedBits<'a, P> {
+    fn new(bits: &'a mut P) -> Self {
+        Self::with_offset(bits, 0)
+    }
+
+    fn with_offset(bits: &'a mut P, offset: usize) -> Self {
+        MaskedBits { bits, offset }
+    }
+
+    fn is_full(&self) -> bool {
+        self.room() == 0
+    }
+
+    fn room(&self) -> usize {
+        P::BIT_COUNT - self.offset
+    }
+
+    fn set_next(&mut self, next: CountedBits<P>) {
+        let mut mask = P::ZERO; // All zeros
+        mask = !mask; // All ones
+        if next.count >= P::BIT_COUNT {
+            mask = P::ZERO; // Zero ones, followed by `next.bits` zeros
+        } else {
+            mask <<= next.count; // Ones, followed by `next.bits` zeros
+        }
+        mask = !mask; // Zeros, followed by `next.bits` ones
+        mask <<= self.offset; // Zeros, followed by `next.bits` ones, followed by `self.offset` zeros
+        mask = !mask; // Ones, followed by `next.bits` zeros, followed by `self.offset` ones
+
+        *self.bits &= mask;
+        *self.bits |= P::from_usize(next.bits.to_usize()) << self.offset;
+
+        self.offset += next.count;
+    }
+}
+
+impl<'a, P: PrimitiveType> Debug for MaskedBits<'a, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CountedBits")
+            .field("value", &format!("{:X}", self.bits))
+            .field("offset", &self.offset)
+            .field("BIT_COUNT", &P::BIT_COUNT)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::ops::Not;
+
     use super::{Primitive, PrimitiveType};
 
     #[test]
@@ -211,6 +355,32 @@ mod tests {
 
         let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 4);
         assert_eq!(u16_ref.get(), 0xEDCB);
+    }
+
+    #[test]
+    fn mutable_contained() {
+        let mut u: [u16; 1] = [0b_11110000_10010011];
+
+        let u8_mut: &mut Primitive<u8> = Primitive::new_mut(&mut u, 4);
+        let previous = u8_mut.set(0b_01011100);
+        assert_eq!(previous, 0b_00001001);
+        assert_eq!(u, [0b_11110101_11000011]);
+
+        Primitive::<u8>::new_mut(&mut u, 4).modify(Not::not);
+        assert_eq!(u, [0b_11111010_00110011]);
+    }
+
+    #[test]
+    fn mutable_across() {
+        let mut u: [u8; 3] = [0xBA, 0xDC, 0xFE];
+
+        let u16_mut: &mut Primitive<u16> = Primitive::new_mut(&mut u, 4);
+        let previous = u16_mut.set(0xBCDE);
+        assert_eq!(previous, 0xEDCB);
+        assert_eq!(u, [0xEA, 0xCD, 0xFB]);
+
+        Primitive::<u16>::new_mut(&mut u, 4).modify(Not::not);
+        assert_eq!(u, [0x1A, 0x32, 0xF4]);
     }
 
     #[test]
