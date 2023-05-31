@@ -15,9 +15,12 @@ impl DstRefRepr {
             offset + bit_count <= p.len() * P::BIT_COUNT,
             "invalid bit offset"
         );
-        // TODO: normalize
+
+        let index = offset / P::BIT_COUNT;
+        let offset = offset % P::BIT_COUNT;
+
         DstRefRepr {
-            ptr: p.as_ptr().cast(),
+            ptr: ((&p[index]) as *const P).cast(),
             metadata: (offset << DISCRIMINANT_BIT_COUNT) | (P::DISCRIMINANT & DISCRIMINANT_MASK),
         }
     }

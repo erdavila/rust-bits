@@ -409,6 +409,8 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
+    use crate::refs::DstRefRepr;
+
     use super::{Primitive, PrimitiveType};
 
     #[test]
@@ -575,5 +577,27 @@ mod tests {
         assert_eq!(format!("{:X}", u8_ref), format!("{:X}", 0xBCu8));
         assert_eq!(format!("{:e}", u8_ref), format!("{:e}", 0xBCu8));
         assert_eq!(format!("{:E}", u8_ref), format!("{:E}", 0xBCu8));
+    }
+
+    #[test]
+    fn normalization() {
+        let under: [u16; 3] = [0x7654, 0xBA98, 0xFEDC];
+
+        let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 15);
+        let repr: DstRefRepr = unsafe { std::mem::transmute(u16_ref) };
+        assert!(std::ptr::eq(repr.ptr() as *const u16, &under[0]));
+        assert_eq!(repr.offset(), 15);
+
+        let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 16);
+        let repr: DstRefRepr = unsafe { std::mem::transmute(u16_ref) };
+        assert!(std::ptr::eq(repr.ptr() as *const u16, &under[1]));
+        assert_eq!(repr.offset(), 0);
+        assert_eq!(u16_ref.get(), 0xBA98u16);
+
+        let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 24);
+        let repr: DstRefRepr = unsafe { std::mem::transmute(u16_ref) };
+        assert!(std::ptr::eq(repr.ptr() as *const u16, &under[1]));
+        assert_eq!(repr.offset(), 8);
+        assert_eq!(u16_ref.get(), 0xDCBAu16);
     }
 }
