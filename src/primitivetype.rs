@@ -1,7 +1,8 @@
 use std::fmt::{LowerHex, UpperHex};
+use std::hash::Hash;
 use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, ShlAssign, ShrAssign};
 
-pub trait PrimitiveType: Copy + PartialEq + LowerHex + UpperHex
+pub trait PrimitiveType: Copy + Eq + Hash + LowerHex + UpperHex
 where
     Self: Not<Output = Self>,
     Self: BitAnd<Output = Self>,

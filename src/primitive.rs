@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
 use crate::refs::DstRefRepr;
@@ -28,6 +29,7 @@ use crate::PrimitiveType;
 ///
 /// [primitive]: PrimitiveType
 #[repr(C)]
+#[derive(Eq)]
 pub struct Primitive<P: PrimitiveType> {
     _phantom: PhantomData<P>,
     _unsized: [()],
@@ -156,6 +158,24 @@ impl<P: PrimitiveType> Primitive<P> {
             u128::DISCRIMINANT => modify::<P, u128>(f, parts),
             _ => unreachable!(),
         }
+    }
+}
+
+impl<P: PrimitiveType> PartialEq for Primitive<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl<P: PrimitiveType> PartialEq<P> for Primitive<P> {
+    fn eq(&self, other: &P) -> bool {
+        self.get() == *other
+    }
+}
+
+impl<P: PrimitiveType> Hash for Primitive<P> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.get().hash(state);
     }
 }
 
@@ -314,6 +334,7 @@ impl<'a, P: PrimitiveType> Debug for MaskedBits<'a, P> {
 
 #[cfg(test)]
 mod tests {
+    use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
     use super::{Primitive, PrimitiveType};
@@ -416,5 +437,43 @@ mod tests {
         let mut under: [u8; 3] = [0xBA, 0xDC, 0xFE];
 
         Primitive::<u16>::new_mut(&mut under, 9);
+    }
+
+    #[test]
+    fn eq() {
+        let under = 0xABABu16;
+
+        let u8_ref_0: &Primitive<u8> = Primitive::new_ref(std::slice::from_ref(&under), 0);
+        let u8_ref_4: &Primitive<u8> = Primitive::new_ref(std::slice::from_ref(&under), 4);
+        let u8_ref_8: &Primitive<u8> = Primitive::new_ref(std::slice::from_ref(&under), 8);
+
+        assert!(u8_ref_0 == u8_ref_0);
+        assert!(u8_ref_0 == u8_ref_8);
+        // assert!(u8_ref_0 == 0xABu8); // Not possible?
+        assert!(u8_ref_0 == &0xABu8);
+        // assert!(0xABu8 == u8_ref_0); // Not possible?
+        // assert!(&0xABu8 == u8_ref_0); // Not possible?
+
+        assert!(u8_ref_4 != u8_ref_0);
+
+        assert!(u8_ref_4 == u8_ref_4);
+        // assert!(u8_ref_4 == 0xBAu8); // Not possible?
+        assert!(u8_ref_4 == &0xBAu8);
+        // assert!(0xBAu8 == u8_ref_4); // Not possible?
+        // assert!(&0xBAu8 == u8_ref_4); // Not possible?
+    }
+
+    #[test]
+    fn hash() {
+        fn hash_value<H: Hash>(h: H) -> u64 {
+            let mut s = std::collections::hash_map::DefaultHasher::new();
+            h.hash(&mut s);
+            s.finish()
+        }
+
+        let under = 0xABCDu16;
+        let u8_ref: &Primitive<u8> = Primitive::new_ref(std::slice::from_ref(&under), 4);
+
+        assert_eq!(hash_value(u8_ref), hash_value(0xBCu8));
     }
 }
