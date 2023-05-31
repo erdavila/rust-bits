@@ -1,6 +1,7 @@
-use std::fmt::Debug;
+use std::fmt::{Binary, Debug, Display, LowerExp, LowerHex, UpperExp, UpperHex};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
 
 use crate::refs::DstRefRepr;
 use crate::PrimitiveType;
@@ -167,8 +168,11 @@ impl<P: PrimitiveType> PartialEq for Primitive<P> {
     }
 }
 
-impl<P: PrimitiveType> PartialEq<P> for Primitive<P> {
-    fn eq(&self, other: &P) -> bool {
+impl<P: PrimitiveType, T> PartialEq<T> for Primitive<P>
+where
+    P: PartialEq<T>,
+{
+    fn eq(&self, other: &T) -> bool {
         self.get() == *other
     }
 }
@@ -178,6 +182,74 @@ impl<P: PrimitiveType> Hash for Primitive<P> {
         self.get().hash(state);
     }
 }
+
+impl<P: PrimitiveType> PartialOrd for Primitive<P> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<P: PrimitiveType, T> PartialOrd<T> for Primitive<P>
+where
+    P: PartialOrd<T>,
+{
+    fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
+        self.get().partial_cmp(other)
+    }
+}
+
+impl<P: PrimitiveType> Ord for Primitive<P> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get().cmp(&other.get())
+    }
+}
+
+macro_rules! impl_binary_operation {
+    ($trait:ident $method:ident $operator:tt) => {
+        impl<P: PrimitiveType, T> $trait<T> for &Primitive<P> where P: $trait<T> {
+            type Output = <P as $trait<T>>::Output;
+
+            fn $method(self, rhs: T) -> Self::Output {
+                self.get() $operator rhs
+            }
+        }
+    };
+}
+
+impl_binary_operation!(Add add +);
+impl_binary_operation!(Sub sub -);
+impl_binary_operation!(Mul mul *);
+impl_binary_operation!(Div div /);
+impl_binary_operation!(Rem rem %);
+
+impl<P: PrimitiveType> Not for &Primitive<P> {
+    type Output = P;
+
+    fn not(self) -> Self::Output {
+        !self.get()
+    }
+}
+impl_binary_operation!(BitAnd bitand &);
+impl_binary_operation!(BitOr bitor |);
+impl_binary_operation!(BitXor bitxor ^);
+
+macro_rules! impl_formatting {
+    ($trait:ident $format:literal) => {
+        impl<P: PrimitiveType> $trait for Primitive<P> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, concat!("{:", $format, "}"), self.get())
+            }
+        }
+    };
+}
+
+impl_formatting!(Display "");
+impl_formatting!(Debug "?");
+impl_formatting!(Binary "b");
+impl_formatting!(LowerHex "x");
+impl_formatting!(UpperHex "X");
+impl_formatting!(LowerExp "e");
+impl_formatting!(UpperExp "E");
 
 struct PrimitiveAccess<P: PrimitiveType, U: PrimitiveType> {
     offset: usize,
@@ -475,5 +547,33 @@ mod tests {
         let u8_ref: &Primitive<u8> = Primitive::new_ref(std::slice::from_ref(&under), 4);
 
         assert_eq!(hash_value(u8_ref), hash_value(0xBCu8));
+    }
+
+    #[test]
+    fn ops() {
+        let under = 0xABCDu16; // Bits: 1010_1011_1100_1101
+        let u8_ref: &Primitive<u8> = Primitive::new_ref(std::slice::from_ref(&under), 4);
+
+        assert!(u8_ref < &0xBDu8);
+        assert!(u8_ref > &0xBBu8);
+
+        assert_eq!(u8_ref + 0x21u8, 0xDDu8);
+        assert_eq!(u8_ref - 0x12u8, 0xAAu8);
+        assert_eq!(u8_ref * 1, 0xBCu8);
+        assert_eq!(u8_ref / 2, 0x5Eu8);
+        assert_eq!(u8_ref % 3, 0xBCu8 % 3);
+
+        assert_eq!(!u8_ref, 0x43u8);
+        assert_eq!(u8_ref & 0b10101010u8, 0b10101000u8);
+        assert_eq!(u8_ref | 0b01010101u8, 0b11111101u8);
+        assert_eq!(u8_ref ^ 0b10101010u8, 0b00010110u8);
+
+        assert_eq!(format!("{:}", u8_ref), format!("{:}", 0xBCu8));
+        assert_eq!(format!("{:?}", u8_ref), format!("{:?}", 0xBCu8));
+        assert_eq!(format!("{:b}", u8_ref), format!("{:b}", 0xBCu8));
+        assert_eq!(format!("{:x}", u8_ref), format!("{:x}", 0xBCu8));
+        assert_eq!(format!("{:X}", u8_ref), format!("{:X}", 0xBCu8));
+        assert_eq!(format!("{:e}", u8_ref), format!("{:e}", 0xBCu8));
+        assert_eq!(format!("{:E}", u8_ref), format!("{:E}", 0xBCu8));
     }
 }
