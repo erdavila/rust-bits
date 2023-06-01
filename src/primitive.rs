@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
 
-use crate::refs::DstRefRepr;
+use crate::refs::{DstMutRefRepr, DstRefRepr, UntypedMutRefComponents, UntypedRefComponents};
 use crate::{PrimitiveType, UnderlyingPrimitives};
 
 /// Representation of a reference to a [primitive] composed by contiguous bits
@@ -51,8 +51,8 @@ impl<P: PrimitiveType> Primitive<P> {
     /// let _: &Primitive<u16> = Primitive::new_ref(&underlying, 4);
     /// ```
     pub fn new_ref<U: UnderlyingPrimitives + ?Sized>(under: &U, first_bit_index: usize) -> &Self {
-        let parts = DstRefRepr::new(under, first_bit_index, P::BIT_COUNT);
-        unsafe { std::mem::transmute(parts) }
+        let repr = DstRefRepr::encode(under, first_bit_index, P::BIT_COUNT);
+        unsafe { std::mem::transmute(repr) }
     }
 
     /// Creates a reference to a mutable primitive.
@@ -72,27 +72,27 @@ impl<P: PrimitiveType> Primitive<P> {
         under: &mut U,
         first_bit_index: usize,
     ) -> &mut Self {
-        let parts = DstRefRepr::new(under, first_bit_index, P::BIT_COUNT);
-        unsafe { std::mem::transmute(parts) }
+        let repr = DstMutRefRepr::encode(under, first_bit_index, P::BIT_COUNT);
+        unsafe { std::mem::transmute(repr) }
     }
 
     /// Gets the value of the referenced primitive.
     pub fn get(&self) -> P {
-        fn get<P: PrimitiveType, U: PrimitiveType>(parts: DstRefRepr) -> P {
-            let ptr = parts.ptr();
-            let access = PrimitiveAccess::<P, U>::new(parts.offset());
-            access.get_primitive(ptr)
+        fn get<P: PrimitiveType, U: PrimitiveType>(components: UntypedRefComponents) -> P {
+            let ptr = components.ptr;
+            let access = PrimitiveAccess::<P, U>::new(components.offset);
+            access.get_primitive(ptr.cast())
         }
 
-        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
+        let components = self.repr().decode();
 
-        match parts.discriminant() {
-            usize::DISCRIMINANT => get::<P, usize>(parts),
-            u8::DISCRIMINANT => get::<P, u8>(parts),
-            u16::DISCRIMINANT => get::<P, u16>(parts),
-            u32::DISCRIMINANT => get::<P, u32>(parts),
-            u64::DISCRIMINANT => get::<P, u64>(parts),
-            u128::DISCRIMINANT => get::<P, u128>(parts),
+        match components.discriminant {
+            usize::DISCRIMINANT => get::<P, usize>(components),
+            u8::DISCRIMINANT => get::<P, u8>(components),
+            u16::DISCRIMINANT => get::<P, u16>(components),
+            u32::DISCRIMINANT => get::<P, u32>(components),
+            u64::DISCRIMINANT => get::<P, u64>(components),
+            u128::DISCRIMINANT => get::<P, u128>(components),
             _ => unreachable!(),
         }
     }
@@ -101,23 +101,26 @@ impl<P: PrimitiveType> Primitive<P> {
     ///
     /// It returns the previous value.
     pub fn set(&mut self, value: P) -> P {
-        fn set<P: PrimitiveType, U: PrimitiveType>(value: P, parts: DstRefRepr) -> P {
-            let ptr = parts.mut_ptr();
-            let access = PrimitiveAccess::<P, U>::new(parts.offset());
-            let previous_value = access.get_primitive(ptr);
-            access.set_primitive(ptr, value);
+        fn set<P: PrimitiveType, U: PrimitiveType>(
+            value: P,
+            components: UntypedMutRefComponents,
+        ) -> P {
+            let ptr = components.ptr;
+            let access = PrimitiveAccess::<P, U>::new(components.offset);
+            let previous_value = access.get_primitive(ptr.cast());
+            access.set_primitive(ptr.cast(), value);
             previous_value
         }
 
-        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
+        let components = self.repr_mut().decode();
 
-        match parts.discriminant() {
-            usize::DISCRIMINANT => set::<P, usize>(value, parts),
-            u8::DISCRIMINANT => set::<P, u8>(value, parts),
-            u16::DISCRIMINANT => set::<P, u16>(value, parts),
-            u32::DISCRIMINANT => set::<P, u32>(value, parts),
-            u64::DISCRIMINANT => set::<P, u64>(value, parts),
-            u128::DISCRIMINANT => set::<P, u128>(value, parts),
+        match components.discriminant {
+            usize::DISCRIMINANT => set::<P, usize>(value, components),
+            u8::DISCRIMINANT => set::<P, u8>(value, components),
+            u16::DISCRIMINANT => set::<P, u16>(value, components),
+            u32::DISCRIMINANT => set::<P, u32>(value, components),
+            u64::DISCRIMINANT => set::<P, u64>(value, components),
+            u128::DISCRIMINANT => set::<P, u128>(value, components),
             _ => unreachable!(),
         }
     }
@@ -143,25 +146,36 @@ impl<P: PrimitiveType> Primitive<P> {
     where
         F: FnOnce(P) -> P,
     {
-        fn modify<P: PrimitiveType, U: PrimitiveType>(f: impl FnOnce(P) -> P, parts: DstRefRepr) {
-            let ptr = parts.mut_ptr();
-            let access = PrimitiveAccess::<P, U>::new(parts.offset());
-            let previous_value = access.get_primitive(ptr);
+        fn modify<P: PrimitiveType, U: PrimitiveType>(
+            f: impl FnOnce(P) -> P,
+            components: UntypedMutRefComponents,
+        ) {
+            let ptr = components.ptr;
+            let access = PrimitiveAccess::<P, U>::new(components.offset);
+            let previous_value = access.get_primitive(ptr.cast());
             let new_value = f(previous_value);
-            access.set_primitive(ptr, new_value);
+            access.set_primitive(ptr.cast(), new_value);
         }
 
-        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
+        let components = self.repr_mut().decode();
 
-        match parts.discriminant() {
-            usize::DISCRIMINANT => modify::<P, usize>(f, parts),
-            u8::DISCRIMINANT => modify::<P, u8>(f, parts),
-            u16::DISCRIMINANT => modify::<P, u16>(f, parts),
-            u32::DISCRIMINANT => modify::<P, u32>(f, parts),
-            u64::DISCRIMINANT => modify::<P, u64>(f, parts),
-            u128::DISCRIMINANT => modify::<P, u128>(f, parts),
+        match components.discriminant {
+            usize::DISCRIMINANT => modify::<P, usize>(f, components),
+            u8::DISCRIMINANT => modify::<P, u8>(f, components),
+            u16::DISCRIMINANT => modify::<P, u16>(f, components),
+            u32::DISCRIMINANT => modify::<P, u32>(f, components),
+            u64::DISCRIMINANT => modify::<P, u64>(f, components),
+            u128::DISCRIMINANT => modify::<P, u128>(f, components),
             _ => unreachable!(),
         }
+    }
+
+    fn repr(&self) -> DstRefRepr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    fn repr_mut(&mut self) -> DstMutRefRepr {
+        unsafe { std::mem::transmute(self) }
     }
 }
 
@@ -586,21 +600,25 @@ mod tests {
     fn normalization() {
         let under: [u16; 3] = [0x7654, 0xBA98, 0xFEDC];
 
-        let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 15);
-        let repr: DstRefRepr = unsafe { std::mem::transmute(u16_ref) };
-        assert!(std::ptr::eq(repr.ptr() as *const u16, &under[0]));
-        assert_eq!(repr.offset(), 15);
+        let encode_and_decode_u16_ref = |first_bit_index| {
+            let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, first_bit_index);
+            let repr: DstRefRepr = unsafe { std::mem::transmute::<_, DstRefRepr>(u16_ref) };
+            let components = repr.decode();
+            (u16_ref, components)
+        };
 
-        let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 16);
-        let repr: DstRefRepr = unsafe { std::mem::transmute(u16_ref) };
-        assert!(std::ptr::eq(repr.ptr() as *const u16, &under[1]));
-        assert_eq!(repr.offset(), 0);
+        let (_, output) = encode_and_decode_u16_ref(15);
+        assert!(std::ptr::eq(output.ptr as *const u16, &under[0]));
+        assert_eq!(output.offset, 15);
+
+        let (u16_ref, output) = encode_and_decode_u16_ref(16);
+        assert!(std::ptr::eq(output.ptr as *const u16, &under[1]));
+        assert_eq!(output.offset, 0);
         assert_eq!(u16_ref.get(), 0xBA98u16);
 
-        let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, 24);
-        let repr: DstRefRepr = unsafe { std::mem::transmute(u16_ref) };
-        assert!(std::ptr::eq(repr.ptr() as *const u16, &under[1]));
-        assert_eq!(repr.offset(), 8);
+        let (u16_ref, output) = encode_and_decode_u16_ref(24);
+        assert!(std::ptr::eq(output.ptr as *const u16, &under[1]));
+        assert_eq!(output.offset, 8);
         assert_eq!(u16_ref.get(), 0xDCBAu16);
     }
 }

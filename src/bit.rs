@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
 use crate::primitivetype::PrimitiveType;
-use crate::refs::DstRefRepr;
+use crate::refs::{DstMutRefRepr, DstRefRepr, UntypedMutRefComponents, UntypedRefComponents};
 use crate::UnderlyingPrimitives;
 
 /// Representation of a reference to a single bit in a [primitive].
@@ -43,8 +43,8 @@ impl Bit {
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
     pub fn new_ref<U: UnderlyingPrimitives>(under: &U, bit_index: usize) -> &Self {
-        let parts = DstRefRepr::new(under, bit_index, 1);
-        unsafe { std::mem::transmute(parts) }
+        let repr = DstRefRepr::encode(under, bit_index, 1);
+        unsafe { std::mem::transmute(repr) }
     }
 
     /// Creates a reference to a single mutable bit.
@@ -53,27 +53,27 @@ impl Bit {
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
     pub fn new_mut<U: UnderlyingPrimitives>(under: &mut U, bit_index: usize) -> &mut Self {
-        let parts = DstRefRepr::new(under, bit_index, 1);
-        unsafe { std::mem::transmute(parts) }
+        let repr = DstMutRefRepr::encode(under, bit_index, 1);
+        unsafe { std::mem::transmute(repr) }
     }
 
     /// Gets the value of the referenced bit.
     pub fn get(&self) -> BitValue {
-        fn get<P: PrimitiveType>(parts: DstRefRepr) -> BitValue {
-            let p = unsafe { parts.get_ref() };
-            let mask = Mask::<P>::new(parts.offset());
-            mask.get_bit_value(p)
+        fn get<P: PrimitiveType>(components: UntypedRefComponents) -> BitValue {
+            let mask = Mask::<P>::new(components.offset);
+            let under = components.get_ref();
+            mask.get_bit_value(under)
         }
 
-        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
+        let components = self.repr().decode();
 
-        match parts.discriminant() {
-            usize::DISCRIMINANT => get::<usize>(parts),
-            u8::DISCRIMINANT => get::<u8>(parts),
-            u16::DISCRIMINANT => get::<u16>(parts),
-            u32::DISCRIMINANT => get::<u32>(parts),
-            u64::DISCRIMINANT => get::<u64>(parts),
-            u128::DISCRIMINANT => get::<u128>(parts),
+        match components.discriminant {
+            usize::DISCRIMINANT => get::<usize>(components),
+            u8::DISCRIMINANT => get::<u8>(components),
+            u16::DISCRIMINANT => get::<u16>(components),
+            u32::DISCRIMINANT => get::<u32>(components),
+            u64::DISCRIMINANT => get::<u64>(components),
+            u128::DISCRIMINANT => get::<u128>(components),
             _ => unreachable!(),
         }
     }
@@ -82,23 +82,26 @@ impl Bit {
     ///
     /// It returns the previous value.
     pub fn set(&mut self, value: BitValue) -> BitValue {
-        fn set<P: PrimitiveType>(value: BitValue, parts: DstRefRepr) -> BitValue {
-            let p = unsafe { parts.get_mut() };
-            let mask = Mask::<P>::new(parts.offset());
-            let previous_value = mask.get_bit_value(p);
-            mask.set_bit_value(p, value);
+        fn set<P: PrimitiveType>(
+            value: BitValue,
+            mut components: UntypedMutRefComponents,
+        ) -> BitValue {
+            let mask = Mask::<P>::new(components.offset);
+            let under = components.get_ref();
+            let previous_value = mask.get_bit_value(under);
+            mask.set_bit_value(under, value);
             previous_value
         }
 
-        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
+        let components = self.repr_mut().decode();
 
-        match parts.discriminant() {
-            usize::DISCRIMINANT => set::<usize>(value, parts),
-            u8::DISCRIMINANT => set::<u8>(value, parts),
-            u16::DISCRIMINANT => set::<u16>(value, parts),
-            u32::DISCRIMINANT => set::<u32>(value, parts),
-            u64::DISCRIMINANT => set::<u64>(value, parts),
-            u128::DISCRIMINANT => set::<u128>(value, parts),
+        match components.discriminant {
+            usize::DISCRIMINANT => set::<usize>(value, components),
+            u8::DISCRIMINANT => set::<u8>(value, components),
+            u16::DISCRIMINANT => set::<u16>(value, components),
+            u32::DISCRIMINANT => set::<u32>(value, components),
+            u64::DISCRIMINANT => set::<u64>(value, components),
+            u128::DISCRIMINANT => set::<u128>(value, components),
             _ => unreachable!(),
         }
     }
@@ -124,25 +127,36 @@ impl Bit {
     where
         F: FnOnce(BitValue) -> BitValue,
     {
-        fn modify<P: PrimitiveType>(f: impl FnOnce(BitValue) -> BitValue, parts: DstRefRepr) {
-            let p = unsafe { parts.get_mut() };
-            let mask = Mask::<P>::new(parts.offset());
-            let previous_value = mask.get_bit_value(p);
+        fn modify<P: PrimitiveType>(
+            f: impl FnOnce(BitValue) -> BitValue,
+            mut components: UntypedMutRefComponents,
+        ) {
+            let mask = Mask::<P>::new(components.offset);
+            let under = components.get_ref();
+            let previous_value = mask.get_bit_value(under);
             let new_value = f(previous_value);
-            mask.set_bit_value(p, new_value);
+            mask.set_bit_value(under, new_value);
         }
 
-        let parts: DstRefRepr = unsafe { std::mem::transmute(self) };
+        let components = self.repr_mut().decode();
 
-        match parts.discriminant() {
-            usize::DISCRIMINANT => modify::<usize>(f, parts),
-            u8::DISCRIMINANT => modify::<u8>(f, parts),
-            u16::DISCRIMINANT => modify::<u16>(f, parts),
-            u32::DISCRIMINANT => modify::<u32>(f, parts),
-            u64::DISCRIMINANT => modify::<u64>(f, parts),
-            u128::DISCRIMINANT => modify::<u128>(f, parts),
+        match components.discriminant {
+            usize::DISCRIMINANT => modify::<usize>(f, components),
+            u8::DISCRIMINANT => modify::<u8>(f, components),
+            u16::DISCRIMINANT => modify::<u16>(f, components),
+            u32::DISCRIMINANT => modify::<u32>(f, components),
+            u64::DISCRIMINANT => modify::<u64>(f, components),
+            u128::DISCRIMINANT => modify::<u128>(f, components),
             _ => unreachable!(),
         }
+    }
+
+    fn repr(&self) -> DstRefRepr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    fn repr_mut(&mut self) -> DstMutRefRepr {
+        unsafe { std::mem::transmute(self) }
     }
 }
 
