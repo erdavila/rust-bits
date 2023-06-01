@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use crate::bitvalue::BitValue;
 use crate::primitivetype::PrimitiveType;
 use crate::refs::DstRefRepr;
+use crate::UnderlyingPrimitives;
 
 /// Representation of a reference to a single bit in a [primitive].
 ///
@@ -41,8 +42,8 @@ impl Bit {
     /// # Panics
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
-    pub fn new_ref<P: PrimitiveType>(p: &P, bit_index: usize) -> &Self {
-        let parts = DstRefRepr::new(std::slice::from_ref(p), bit_index, 1);
+    pub fn new_ref<U: UnderlyingPrimitives>(under: &U, bit_index: usize) -> &Self {
+        let parts = DstRefRepr::new(under, bit_index, 1);
         unsafe { std::mem::transmute(parts) }
     }
 
@@ -51,8 +52,8 @@ impl Bit {
     /// # Panics
     ///
     /// It panics if the `bit_index` is too high for the primitive type.
-    pub fn new_mut<P: PrimitiveType>(p: &mut P, bit_index: usize) -> &mut Self {
-        let parts = DstRefRepr::new(std::slice::from_ref(p), bit_index, 1);
+    pub fn new_mut<U: UnderlyingPrimitives>(under: &mut U, bit_index: usize) -> &mut Self {
+        let parts = DstRefRepr::new(under, bit_index, 1);
         unsafe { std::mem::transmute(parts) }
     }
 

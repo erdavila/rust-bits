@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
 
 use crate::refs::DstRefRepr;
-use crate::PrimitiveType;
+use crate::{PrimitiveType, UnderlyingPrimitives};
 
 /// Representation of a reference to a [primitive] composed by contiguous bits
 /// anywhere in underlying primitives.
@@ -50,7 +50,7 @@ impl<P: PrimitiveType> Primitive<P> {
     /// let underlying: [u8; 2] = [0xBA, 0xDC]; // In memory: 0xDCBA
     /// let _: &Primitive<u16> = Primitive::new_ref(&underlying, 4);
     /// ```
-    pub fn new_ref<U: PrimitiveType>(under: &[U], first_bit_index: usize) -> &Self {
+    pub fn new_ref<U: UnderlyingPrimitives + ?Sized>(under: &U, first_bit_index: usize) -> &Self {
         let parts = DstRefRepr::new(under, first_bit_index, P::BIT_COUNT);
         unsafe { std::mem::transmute(parts) }
     }
@@ -68,7 +68,10 @@ impl<P: PrimitiveType> Primitive<P> {
     /// let mut underlying: [u8; 2] = [0xBA, 0xDC]; // In memory: 0xDCBA
     /// let _: &mut Primitive<u16> = Primitive::new_mut(&mut underlying, 4);
     /// ```
-    pub fn new_mut<U: PrimitiveType>(under: &mut [U], first_bit_index: usize) -> &mut Self {
+    pub fn new_mut<U: UnderlyingPrimitives + ?Sized>(
+        under: &mut U,
+        first_bit_index: usize,
+    ) -> &mut Self {
         let parts = DstRefRepr::new(under, first_bit_index, P::BIT_COUNT);
         unsafe { std::mem::transmute(parts) }
     }
@@ -418,7 +421,7 @@ mod tests {
         assert!(u8::BIT_COUNT < usize::BIT_COUNT);
         assert!(u16::BIT_COUNT < usize::BIT_COUNT);
 
-        let under: [u16; 1] = [0b_11110000_10010011];
+        let under: u16 = 0b_11110000_10010011;
 
         let u8_ref: &Primitive<u8> = Primitive::new_ref(&under, 4);
         assert_eq!(u8_ref.get(), 0b_00001001);
@@ -444,15 +447,15 @@ mod tests {
 
     #[test]
     fn mutable_contained() {
-        let mut u: [u16; 1] = [0b_11110000_10010011];
+        let mut u: u16 = 0b_11110000_10010011;
 
         let u8_mut: &mut Primitive<u8> = Primitive::new_mut(&mut u, 4);
         let previous = u8_mut.set(0b_01011100);
         assert_eq!(previous, 0b_00001001);
-        assert_eq!(u, [0b_11110101_11000011]);
+        assert_eq!(u, 0b_11110101_11000011);
 
         Primitive::<u8>::new_mut(&mut u, 4).modify(Not::not);
-        assert_eq!(u, [0b_11111010_00110011]);
+        assert_eq!(u, 0b_11111010_00110011);
     }
 
     #[test]
@@ -484,7 +487,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid bit offset")]
     fn new_ref_invalid_first_bit_index_contained() {
-        let under: [u16; 1] = [0b_11110000_10010011];
+        let under: u16 = 0b_11110000_10010011;
 
         Primitive::<u8>::new_ref(&under, 9);
     }
@@ -500,7 +503,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid bit offset")]
     fn new_mut_invalid_first_bit_index_contained() {
-        let mut under: [u16; 1] = [0b_11110000_10010011];
+        let mut under: u16 = 0b_11110000_10010011;
 
         Primitive::<u8>::new_mut(&mut under, 9);
     }

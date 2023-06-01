@@ -22,6 +22,7 @@ mod bitvalue;
 mod primitive;
 mod primitivetype;
 mod refs;
+mod underlying;
 
 pub use bit::*;
 pub use bitsource::*;
@@ -30,3 +31,4 @@ pub use bitstring::*;
 pub use bitvalue::*;
 pub use primitive::*;
 pub use primitivetype::*;
+pub use underlying::*;

@@ -1,4 +1,5 @@
 use crate::primitivetype::PrimitiveType;
+use crate::UnderlyingPrimitives;
 
 const DISCRIMINANT_MASK: usize = 0b0111;
 const DISCRIMINANT_BIT_COUNT: usize = 3;
@@ -10,18 +11,23 @@ pub(crate) struct DstRefRepr {
 }
 
 impl DstRefRepr {
-    pub(crate) fn new<P: PrimitiveType>(p: &[P], offset: usize, bit_count: usize) -> Self {
+    pub(crate) fn new<U: UnderlyingPrimitives + ?Sized>(
+        under: &U,
+        offset: usize,
+        bit_count: usize,
+    ) -> Self {
         assert!(
-            offset + bit_count <= p.len() * P::BIT_COUNT,
+            offset + bit_count <= under.bit_count(),
             "invalid bit offset"
         );
 
-        let index = offset / P::BIT_COUNT;
-        let offset = offset % P::BIT_COUNT;
+        let index = offset / U::Primitive::BIT_COUNT;
+        let offset = offset % U::Primitive::BIT_COUNT;
 
         DstRefRepr {
-            ptr: ((&p[index]) as *const P).cast(),
-            metadata: (offset << DISCRIMINANT_BIT_COUNT) | (P::DISCRIMINANT & DISCRIMINANT_MASK),
+            ptr: under.slice_ref()[index..].as_ptr().cast(),
+            metadata: (offset << DISCRIMINANT_BIT_COUNT)
+                | (U::Primitive::DISCRIMINANT & DISCRIMINANT_MASK),
         }
     }
 
