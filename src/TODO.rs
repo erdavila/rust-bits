@@ -51,12 +51,12 @@ fn bit_string_construction() {
 
 fn bit_str_construction() {
     let n: u8; // ... and other primitive types
-    let bit_str: &BitStr = BitStr::from(&n);
-    let bit_str: &mut BitStr = BitStr::from(&mut n);
+    let bit_str: &BitStr = BitStr::new_ref(&n);
+    let bit_str: &mut BitStr = BitStr::new_mut(&mut n);
 
     // Also for mut!
     let primitive_slice: &[u8]; // ... and other primitive types
-    let bit_str: &BitStr = BitStr::from(primitive_slice);
+    let bit_str: &BitStr = BitStr::new_ref(primitive_slice);
 }
 
 fn inspecting() {

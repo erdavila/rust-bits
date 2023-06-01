@@ -6,7 +6,7 @@ use crate::refs::{
     DstMutRefRepr, DstMutRefReprExecutor, DstRefRepr, DstRefReprExecutor, MutRefComponents,
     RefComponents,
 };
-use crate::UnderlyingPrimitives;
+use crate::{BitStr, UnderlyingPrimitives};
 
 /// Representation of a reference to a single bit in a [primitive].
 ///
@@ -145,6 +145,14 @@ impl Bit {
         self.repr_mut().decode_and_execute(Executor { f });
     }
 
+    pub fn as_bit_str(&self) -> &BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    pub fn as_bit_str_mut(&mut self) -> &mut BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
+
     fn repr(&self) -> DstRefRepr {
         unsafe { std::mem::transmute(self) }
     }
@@ -214,8 +222,8 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
-    use crate::Bit;
     use crate::BitValue::{One, Zero};
+    use crate::{Bit, BitStr};
 
     #[test]
     fn immutable() {
@@ -312,5 +320,15 @@ mod tests {
 
         assert_eq!(hash_value(bit0), hash_value(Zero));
         assert_eq!(hash_value(bit1), hash_value(One));
+    }
+
+    #[test]
+    fn as_bit_str() {
+        let under = 0u8;
+        let bit = Bit::new_ref(&under, 0);
+
+        let bit_str: &BitStr = bit.as_bit_str();
+
+        assert_eq!(bit_str.len(), 1);
     }
 }

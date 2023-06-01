@@ -8,7 +8,7 @@ use crate::refs::{
     DstMutRefRepr, DstMutRefReprExecutor, DstRefRepr, DstRefReprExecutor, MutRefComponents,
     RefComponents,
 };
-use crate::{copy_bits, PrimitiveType, UnderlyingPrimitives};
+use crate::{copy_bits, BitStr, PrimitiveType, UnderlyingPrimitives};
 
 /// Representation of a reference to a [primitive] composed by contiguous bits
 /// anywhere in underlying primitives.
@@ -166,6 +166,14 @@ impl<P: PrimitiveType> Primitive<P> {
             f,
             phantom: PhantomData,
         });
+    }
+
+    pub fn as_bit_str(&self) -> &BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    pub fn as_bit_str_mut(&mut self) -> &mut BitStr {
+        unsafe { std::mem::transmute(self) }
     }
 
     fn repr(&self) -> DstRefRepr {
@@ -513,5 +521,28 @@ mod tests {
         assert!(std::ptr::eq(output.ptr as *const u16, &under[1]));
         assert_eq!(output.offset, 8);
         assert_eq!(u16_ref.get(), 0xDCBAu16);
+    }
+
+    #[test]
+    fn as_bit_str() {
+        macro_rules! assert_type {
+            ($type:ty) => {
+                let under: [u8; 20] = [
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                ];
+                let p: &Primitive<$type> = Primitive::new_ref(&under, 3);
+
+                let bit_str = p.as_bit_str();
+
+                assert_eq!(bit_str.len(), <$type>::BIT_COUNT);
+            };
+        }
+
+        assert_type!(usize);
+        assert_type!(u8);
+        assert_type!(u16);
+        assert_type!(u32);
+        assert_type!(u64);
+        assert_type!(u128);
     }
 }
