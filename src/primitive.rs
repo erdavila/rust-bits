@@ -3,7 +3,10 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
 
-use crate::refs::{DstMutRefRepr, DstRefRepr, UntypedMutRefComponents, UntypedRefComponents};
+use crate::refs::{
+    DstMutRefRepr, DstMutRefReprExecutor, DstRefRepr, DstRefReprExecutor, MutRefComponents,
+    RefComponents,
+};
 use crate::{PrimitiveType, UnderlyingPrimitives};
 
 /// Representation of a reference to a [primitive] composed by contiguous bits
@@ -78,51 +81,46 @@ impl<P: PrimitiveType> Primitive<P> {
 
     /// Gets the value of the referenced primitive.
     pub fn get(&self) -> P {
-        fn get<P: PrimitiveType, U: PrimitiveType>(components: UntypedRefComponents) -> P {
-            let ptr = components.ptr;
-            let access = PrimitiveAccess::<P, U>::new(components.offset);
-            access.get_primitive(ptr.cast())
+        struct Executor<P: PrimitiveType> {
+            phantom: PhantomData<P>,
         }
 
-        let components = self.repr().decode();
+        impl<P: PrimitiveType> DstRefReprExecutor for Executor<P> {
+            type Output = P;
 
-        match components.discriminant {
-            usize::DISCRIMINANT => get::<P, usize>(components),
-            u8::DISCRIMINANT => get::<P, u8>(components),
-            u16::DISCRIMINANT => get::<P, u16>(components),
-            u32::DISCRIMINANT => get::<P, u32>(components),
-            u64::DISCRIMINANT => get::<P, u64>(components),
-            u128::DISCRIMINANT => get::<P, u128>(components),
-            _ => unreachable!(),
+            fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
+                let ptr = components.ptr;
+                let access = PrimitiveAccess::<P, U>::new(components.offset);
+                access.get_primitive(ptr)
+            }
         }
+
+        self.repr().decode_and_execute(Executor {
+            phantom: PhantomData,
+        })
     }
 
     /// Sets the value of the referenced primitive.
     ///
     /// It returns the previous value.
     pub fn set(&mut self, value: P) -> P {
-        fn set<P: PrimitiveType, U: PrimitiveType>(
+        struct Executor<P: PrimitiveType> {
             value: P,
-            components: UntypedMutRefComponents,
-        ) -> P {
-            let ptr = components.ptr;
-            let access = PrimitiveAccess::<P, U>::new(components.offset);
-            let previous_value = access.get_primitive(ptr.cast());
-            access.set_primitive(ptr.cast(), value);
-            previous_value
         }
 
-        let components = self.repr_mut().decode();
+        impl<P: PrimitiveType> DstMutRefReprExecutor for Executor<P> {
+            type Output = P;
 
-        match components.discriminant {
-            usize::DISCRIMINANT => set::<P, usize>(value, components),
-            u8::DISCRIMINANT => set::<P, u8>(value, components),
-            u16::DISCRIMINANT => set::<P, u16>(value, components),
-            u32::DISCRIMINANT => set::<P, u32>(value, components),
-            u64::DISCRIMINANT => set::<P, u64>(value, components),
-            u128::DISCRIMINANT => set::<P, u128>(value, components),
-            _ => unreachable!(),
+            fn execute<U: PrimitiveType>(self, components: MutRefComponents<U>) -> Self::Output {
+                let ptr = components.ptr;
+                let access = PrimitiveAccess::<P, U>::new(components.offset);
+                let previous_value = access.get_primitive(ptr);
+                access.set_primitive(ptr, self.value);
+                previous_value
+            }
         }
+
+        self.repr_mut().decode_and_execute(Executor { value })
     }
 
     /// Allows retrieving and setting the referenced primitive value in a single
@@ -146,28 +144,27 @@ impl<P: PrimitiveType> Primitive<P> {
     where
         F: FnOnce(P) -> P,
     {
-        fn modify<P: PrimitiveType, U: PrimitiveType>(
-            f: impl FnOnce(P) -> P,
-            components: UntypedMutRefComponents,
-        ) {
-            let ptr = components.ptr;
-            let access = PrimitiveAccess::<P, U>::new(components.offset);
-            let previous_value = access.get_primitive(ptr.cast());
-            let new_value = f(previous_value);
-            access.set_primitive(ptr.cast(), new_value);
+        struct Executor<P: PrimitiveType, F: FnOnce(P) -> P> {
+            f: F,
+            phantom: PhantomData<P>,
         }
 
-        let components = self.repr_mut().decode();
+        impl<P: PrimitiveType, F: FnOnce(P) -> P> DstMutRefReprExecutor for Executor<P, F> {
+            type Output = ();
 
-        match components.discriminant {
-            usize::DISCRIMINANT => modify::<P, usize>(f, components),
-            u8::DISCRIMINANT => modify::<P, u8>(f, components),
-            u16::DISCRIMINANT => modify::<P, u16>(f, components),
-            u32::DISCRIMINANT => modify::<P, u32>(f, components),
-            u64::DISCRIMINANT => modify::<P, u64>(f, components),
-            u128::DISCRIMINANT => modify::<P, u128>(f, components),
-            _ => unreachable!(),
+            fn execute<U: PrimitiveType>(self, components: MutRefComponents<U>) -> Self::Output {
+                let ptr = components.ptr;
+                let access = PrimitiveAccess::<P, U>::new(components.offset);
+                let previous_value = access.get_primitive(ptr);
+                let new_value = (self.f)(previous_value);
+                access.set_primitive(ptr, new_value);
+            }
         }
+
+        self.repr_mut().decode_and_execute(Executor {
+            f,
+            phantom: PhantomData,
+        });
     }
 
     fn repr(&self) -> DstRefRepr {
@@ -426,7 +423,7 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
-    use crate::refs::DstRefRepr;
+    use crate::refs::{DstRefRepr, DstRefReprExecutor, RefComponents};
 
     use super::{Primitive, PrimitiveType};
 
@@ -598,13 +595,31 @@ mod tests {
 
     #[test]
     fn normalization() {
+        struct Output {
+            ptr: *const (),
+            offset: usize,
+        }
+
         let under: [u16; 3] = [0x7654, 0xBA98, 0xFEDC];
 
         let encode_and_decode_u16_ref = |first_bit_index| {
+            struct Executor;
+
+            impl DstRefReprExecutor for Executor {
+                type Output = Output;
+
+                fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
+                    Output {
+                        ptr: components.ptr.cast(),
+                        offset: components.offset,
+                    }
+                }
+            }
+
             let u16_ref: &Primitive<u16> = Primitive::new_ref(&under, first_bit_index);
             let repr: DstRefRepr = unsafe { std::mem::transmute::<_, DstRefRepr>(u16_ref) };
-            let components = repr.decode();
-            (u16_ref, components)
+            let output = repr.decode_and_execute(Executor);
+            (u16_ref, output)
         };
 
         let (_, output) = encode_and_decode_u16_ref(15);

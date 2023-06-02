@@ -24,7 +24,7 @@ where
     Self: ShlAssign<usize>,
     Self: ShrAssign<usize>,
 {
-    const DISCRIMINANT: usize;
+    const DISCRIMINANT: Discriminant;
     const BIT_COUNT: usize;
     const ZERO: Self;
     const ONE: Self;
@@ -34,9 +34,9 @@ where
 }
 
 macro_rules! impl_primitive_type {
-    ($t:ty, $discriminant:literal) => {
+    ($t:ty, $discriminant_name:ident) => {
         impl PrimitiveType for $t {
-            const DISCRIMINANT: usize = $discriminant;
+            const DISCRIMINANT: Discriminant = Discriminant::$discriminant_name;
             const BIT_COUNT: usize = Self::BITS as usize;
             const ZERO: Self = 0;
             const ONE: Self = 1;
@@ -52,9 +52,48 @@ macro_rules! impl_primitive_type {
     };
 }
 
-impl_primitive_type!(usize, 0);
-impl_primitive_type!(u8, 1);
-impl_primitive_type!(u16, 2);
-impl_primitive_type!(u32, 3);
-impl_primitive_type!(u64, 4);
-impl_primitive_type!(u128, 5);
+impl_primitive_type!(usize, Usize);
+impl_primitive_type!(u8, U8);
+impl_primitive_type!(u16, U16);
+impl_primitive_type!(u32, U32);
+impl_primitive_type!(u64, U64);
+impl_primitive_type!(u128, U128);
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Discriminant {
+    Usize,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+}
+
+impl Discriminant {
+    pub(crate) const BIT_COUNT: usize = 3;
+
+    pub(crate) const VALUES: [Self; 6] = [
+        Self::Usize,
+        Self::U8,
+        Self::U16,
+        Self::U32,
+        Self::U64,
+        Self::U128,
+    ];
+
+    pub(crate) fn execute<E: DiscriminantExecutor>(self, executor: E) -> E::Output {
+        match self {
+            usize::DISCRIMINANT => executor.execute::<usize>(),
+            u8::DISCRIMINANT => executor.execute::<u8>(),
+            u16::DISCRIMINANT => executor.execute::<u16>(),
+            u32::DISCRIMINANT => executor.execute::<u32>(),
+            u64::DISCRIMINANT => executor.execute::<u64>(),
+            u128::DISCRIMINANT => executor.execute::<u128>(),
+        }
+    }
+}
+
+pub(crate) trait DiscriminantExecutor {
+    type Output;
+    fn execute<U: PrimitiveType>(self) -> Self::Output;
+}

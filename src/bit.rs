@@ -2,7 +2,10 @@ use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
 use crate::primitivetype::PrimitiveType;
-use crate::refs::{DstMutRefRepr, DstRefRepr, UntypedMutRefComponents, UntypedRefComponents};
+use crate::refs::{
+    DstMutRefRepr, DstMutRefReprExecutor, DstRefRepr, DstRefReprExecutor, MutRefComponents,
+    RefComponents,
+};
 use crate::UnderlyingPrimitives;
 
 /// Representation of a reference to a single bit in a [primitive].
@@ -59,51 +62,45 @@ impl Bit {
 
     /// Gets the value of the referenced bit.
     pub fn get(&self) -> BitValue {
-        fn get<P: PrimitiveType>(components: UntypedRefComponents) -> BitValue {
-            let mask = Mask::<P>::new(components.offset);
-            let under = components.get_ref();
-            mask.get_bit_value(under)
+        struct Executor;
+
+        impl DstRefReprExecutor for Executor {
+            type Output = BitValue;
+
+            fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
+                let under = components.get_ref();
+                let mask = Mask::<U>::new(components.offset);
+                mask.get_bit_value(under)
+            }
         }
 
-        let components = self.repr().decode();
-
-        match components.discriminant {
-            usize::DISCRIMINANT => get::<usize>(components),
-            u8::DISCRIMINANT => get::<u8>(components),
-            u16::DISCRIMINANT => get::<u16>(components),
-            u32::DISCRIMINANT => get::<u32>(components),
-            u64::DISCRIMINANT => get::<u64>(components),
-            u128::DISCRIMINANT => get::<u128>(components),
-            _ => unreachable!(),
-        }
+        self.repr().decode_and_execute(Executor)
     }
 
     /// Sets the value of the referenced bit.
     ///
     /// It returns the previous value.
     pub fn set(&mut self, value: BitValue) -> BitValue {
-        fn set<P: PrimitiveType>(
+        struct Executor {
             value: BitValue,
-            mut components: UntypedMutRefComponents,
-        ) -> BitValue {
-            let mask = Mask::<P>::new(components.offset);
-            let under = components.get_ref();
-            let previous_value = mask.get_bit_value(under);
-            mask.set_bit_value(under, value);
-            previous_value
         }
 
-        let components = self.repr_mut().decode();
+        impl DstMutRefReprExecutor for Executor {
+            type Output = BitValue;
 
-        match components.discriminant {
-            usize::DISCRIMINANT => set::<usize>(value, components),
-            u8::DISCRIMINANT => set::<u8>(value, components),
-            u16::DISCRIMINANT => set::<u16>(value, components),
-            u32::DISCRIMINANT => set::<u32>(value, components),
-            u64::DISCRIMINANT => set::<u64>(value, components),
-            u128::DISCRIMINANT => set::<u128>(value, components),
-            _ => unreachable!(),
+            fn execute<P: PrimitiveType>(
+                self,
+                mut components: MutRefComponents<P>,
+            ) -> Self::Output {
+                let mask = Mask::<P>::new(components.offset);
+                let under = components.get_ref();
+                let previous_value = mask.get_bit_value(under);
+                mask.set_bit_value(under, self.value);
+                previous_value
+            }
         }
+
+        self.repr_mut().decode_and_execute(Executor { value })
     }
 
     /// Allows retrieving and setting the bit value in a single operation.
@@ -127,28 +124,25 @@ impl Bit {
     where
         F: FnOnce(BitValue) -> BitValue,
     {
-        fn modify<P: PrimitiveType>(
-            f: impl FnOnce(BitValue) -> BitValue,
-            mut components: UntypedMutRefComponents,
-        ) {
-            let mask = Mask::<P>::new(components.offset);
-            let under = components.get_ref();
-            let previous_value = mask.get_bit_value(under);
-            let new_value = f(previous_value);
-            mask.set_bit_value(under, new_value);
+        struct Executor<F: FnOnce(BitValue) -> BitValue> {
+            f: F,
         }
 
-        let components = self.repr_mut().decode();
-
-        match components.discriminant {
-            usize::DISCRIMINANT => modify::<usize>(f, components),
-            u8::DISCRIMINANT => modify::<u8>(f, components),
-            u16::DISCRIMINANT => modify::<u16>(f, components),
-            u32::DISCRIMINANT => modify::<u32>(f, components),
-            u64::DISCRIMINANT => modify::<u64>(f, components),
-            u128::DISCRIMINANT => modify::<u128>(f, components),
-            _ => unreachable!(),
+        impl<F: FnOnce(BitValue) -> BitValue> DstMutRefReprExecutor for Executor<F> {
+            type Output = ();
+            fn execute<U: PrimitiveType>(
+                self,
+                mut components: MutRefComponents<U>,
+            ) -> Self::Output {
+                let mask = Mask::<U>::new(components.offset);
+                let under = components.get_ref();
+                let previous_value = mask.get_bit_value(under);
+                let new_value = (self.f)(previous_value);
+                mask.set_bit_value(under, new_value);
+            }
         }
+
+        self.repr_mut().decode_and_execute(Executor { f });
     }
 
     fn repr(&self) -> DstRefRepr {
