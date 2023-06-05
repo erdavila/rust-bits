@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use duplicate::duplicate_item;
 
 use crate::primitivetype::PrimitiveType;
+use crate::utils::make_bits_pattern;
 use crate::{Discriminant, DiscriminantExecutor, UnderlyingPrimitives};
 
 #[duplicate_item(
@@ -118,7 +119,7 @@ struct DecodingValues {
 }
 
 fn decode(metadata: usize) -> DecodingValues {
-    let discriminant_bits = metadata & make_mask([Discriminant::BIT_COUNT]);
+    let discriminant_bits = metadata & make_bits_pattern::<usize>([Discriminant::BIT_COUNT]);
     let discriminant = discriminant_from_bits(discriminant_bits);
 
     let offset = metadata >> Discriminant::BIT_COUNT;
@@ -184,36 +185,10 @@ pub(crate) struct UntypedRefComponents {
     offset: usize,
 }
 
-fn make_mask<I: IntoIterator<Item = usize>>(blocks_len: I) -> usize {
-    let mut mask = 0;
-    let mut parity = false;
-
-    for block_len in blocks_len {
-        mask = !mask << block_len;
-        parity = !parity;
-    }
-
-    if parity {
-        mask = !mask;
-    }
-
-    mask
-}
-
 #[cfg(test)]
 mod tests {
     use crate::refs::{DstRefRepr, DstRefReprExecutor, RefComponents, UntypedRefComponents};
     use crate::{Discriminant, PrimitiveType};
-
-    #[test]
-    fn make_mask() {
-        use super::make_mask;
-
-        assert_eq!(make_mask([]), 0b0);
-        assert_eq!(make_mask([2]), 0b011);
-        assert_eq!(make_mask([2, 3]), 0b011000);
-        assert_eq!(make_mask([2, 3, 4]), 0b0110001111);
-    }
 
     #[test]
     fn encode_and_decode() {

@@ -8,6 +8,7 @@ pub trait PrimitiveType:
     + PartialOrd
     + Ord
     + Hash
+    + Default
     + Display
     + Debug
     + Binary

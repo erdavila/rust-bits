@@ -2,12 +2,13 @@ use std::fmt::{Binary, Debug, Display, LowerExp, LowerHex, UpperExp, UpperHex};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
+use std::slice;
 
 use crate::refs::{
     DstMutRefRepr, DstMutRefReprExecutor, DstRefRepr, DstRefReprExecutor, MutRefComponents,
     RefComponents,
 };
-use crate::{PrimitiveType, UnderlyingPrimitives};
+use crate::{copy_bits, PrimitiveType, UnderlyingPrimitives};
 
 /// Representation of a reference to a [primitive] composed by contiguous bits
 /// anywhere in underlying primitives.
@@ -278,143 +279,20 @@ impl<P: PrimitiveType, U: PrimitiveType> PrimitiveAccess<P, U> {
         }
     }
 
-    fn get_primitive(&self, mut ptr: *const U) -> P {
-        let mut available = CountedBits::new(unsafe { *ptr });
-        available.drop(self.offset);
-
-        let mut resolved = CountedBits::with_count(P::ZERO, 0);
-
-        while resolved.count < P::BIT_COUNT {
-            if available.count == 0 {
-                ptr = unsafe { ptr.add(1) };
-                available = CountedBits::new(unsafe { *ptr });
-            }
-
-            let transfered = available.pop_lsb::<P>();
-            resolved.push_msb(transfered);
-        }
-
-        resolved.bits
+    fn get_primitive(&self, ptr: *const U) -> P {
+        let slice = unsafe { slice::from_raw_parts(ptr, self.required_elems()) };
+        let mut p = P::ZERO;
+        copy_bits(slice, self.offset, slice::from_mut(&mut p), 0, P::BIT_COUNT);
+        p
     }
 
-    fn set_primitive(&self, mut ptr: *mut U, value: P) {
-        let mut available = CountedBits::new(value);
-        let mut destination = MaskedBits::with_offset(unsafe { &mut *ptr }, self.offset);
-
-        while available.count > 0 {
-            if destination.is_full() {
-                ptr = unsafe { ptr.add(1) };
-                destination = MaskedBits::new(unsafe { &mut *ptr });
-            }
-
-            let transfered = available.pop_lsb_at_most::<U>(destination.room());
-            destination.set_next(transfered);
-        }
-    }
-}
-
-struct CountedBits<P: PrimitiveType> {
-    bits: P,
-    count: usize,
-}
-
-impl<P: PrimitiveType> CountedBits<P> {
-    fn new(bits: P) -> Self {
-        Self::with_count(bits, P::BIT_COUNT)
+    fn set_primitive(&self, ptr: *mut U, value: P) {
+        let slice = unsafe { slice::from_raw_parts_mut(ptr, self.required_elems()) };
+        copy_bits(slice::from_ref(&value), 0, slice, self.offset, P::BIT_COUNT);
     }
 
-    fn with_count(bits: P, count: usize) -> Self {
-        CountedBits { bits, count }
-    }
-
-    fn drop(&mut self, bit_count: usize) {
-        if bit_count >= self.count {
-            self.bits = P::ZERO;
-            self.count = 0;
-        } else {
-            self.bits >>= bit_count;
-            self.count -= bit_count;
-        }
-    }
-
-    fn pop_lsb<T: PrimitiveType>(&mut self) -> CountedBits<T> {
-        self.pop_lsb_at_most(T::BIT_COUNT)
-    }
-
-    fn pop_lsb_at_most<T: PrimitiveType>(&mut self, at_most: usize) -> CountedBits<T> {
-        let value = T::from_usize(self.bits.to_usize());
-        let count = [self.count, at_most, <usize as PrimitiveType>::BIT_COUNT]
-            .into_iter()
-            .min()
-            .unwrap_or_default();
-        self.drop(count);
-        CountedBits::with_count(value, count)
-    }
-
-    fn push_msb(&mut self, msb: CountedBits<P>) {
-        self.bits |= msb.bits << self.count;
-        self.count += msb.count;
-    }
-}
-
-impl<P: PrimitiveType> Debug for CountedBits<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CountedBits")
-            .field("value", &format!("{:X}", self.bits))
-            .field("count", &self.count)
-            .field("BIT_COUNT", &P::BIT_COUNT)
-            .finish()
-    }
-}
-
-struct MaskedBits<'a, P: PrimitiveType> {
-    bits: &'a mut P,
-    offset: usize,
-}
-
-impl<'a, P: PrimitiveType> MaskedBits<'a, P> {
-    fn new(bits: &'a mut P) -> Self {
-        Self::with_offset(bits, 0)
-    }
-
-    fn with_offset(bits: &'a mut P, offset: usize) -> Self {
-        MaskedBits { bits, offset }
-    }
-
-    fn is_full(&self) -> bool {
-        self.room() == 0
-    }
-
-    fn room(&self) -> usize {
-        P::BIT_COUNT - self.offset
-    }
-
-    fn set_next(&mut self, next: CountedBits<P>) {
-        let mut mask = P::ZERO; // All zeros
-        mask = !mask; // All ones
-        if next.count >= P::BIT_COUNT {
-            mask = P::ZERO; // Zero ones, followed by `next.bits` zeros
-        } else {
-            mask <<= next.count; // Ones, followed by `next.bits` zeros
-        }
-        mask = !mask; // Zeros, followed by `next.bits` ones
-        mask <<= self.offset; // Zeros, followed by `next.bits` ones, followed by `self.offset` zeros
-        mask = !mask; // Ones, followed by `next.bits` zeros, followed by `self.offset` ones
-
-        *self.bits &= mask;
-        *self.bits |= P::from_usize(next.bits.to_usize()) << self.offset;
-
-        self.offset += next.count;
-    }
-}
-
-impl<'a, P: PrimitiveType> Debug for MaskedBits<'a, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CountedBits")
-            .field("value", &format!("{:X}", self.bits))
-            .field("offset", &self.offset)
-            .field("BIT_COUNT", &P::BIT_COUNT)
-            .finish()
+    fn required_elems(&self) -> usize {
+        (self.offset + P::BIT_COUNT + U::BIT_COUNT - 1) / U::BIT_COUNT
     }
 }
 
