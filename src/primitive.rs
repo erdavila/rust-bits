@@ -86,7 +86,7 @@ impl<P: PrimitiveType> Primitive<P> {
             phantom: PhantomData<P>,
         }
 
-        impl<P: PrimitiveType> DstRefReprExecutor for Executor<P> {
+        impl<P: PrimitiveType> DstRefReprExecutor<'_> for Executor<P> {
             type Output = P;
 
             fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
@@ -109,7 +109,7 @@ impl<P: PrimitiveType> Primitive<P> {
             value: P,
         }
 
-        impl<P: PrimitiveType> DstMutRefReprExecutor for Executor<P> {
+        impl<P: PrimitiveType> DstMutRefReprExecutor<'_> for Executor<P> {
             type Output = P;
 
             fn execute<U: PrimitiveType>(self, components: MutRefComponents<U>) -> Self::Output {
@@ -150,7 +150,7 @@ impl<P: PrimitiveType> Primitive<P> {
             phantom: PhantomData<P>,
         }
 
-        impl<P: PrimitiveType, F: FnOnce(P) -> P> DstMutRefReprExecutor for Executor<P, F> {
+        impl<P: PrimitiveType, F: FnOnce(P) -> P> DstMutRefReprExecutor<'_> for Executor<P, F> {
             type Output = ();
 
             fn execute<U: PrimitiveType>(self, components: MutRefComponents<U>) -> Self::Output {
@@ -491,7 +491,7 @@ mod tests {
         let encode_and_decode_u16_ref = |first_bit_index| {
             struct Executor;
 
-            impl DstRefReprExecutor for Executor {
+            impl DstRefReprExecutor<'_> for Executor {
                 type Output = Output;
 
                 fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {

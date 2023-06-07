@@ -1,5 +1,10 @@
-use crate::refs::{DstMutRefRepr, DstRefRepr, DstRefReprExecutor, RefComponents};
-use crate::UnderlyingPrimitives;
+use std::marker::PhantomData;
+
+use crate::refs::{
+    DstMutRefRepr, DstMutRefReprExecutor, DstRefRepr, DstRefReprExecutor, MutRefComponents,
+    RefComponents,
+};
+use crate::{Bit, BitValue, PrimitiveType, UnderlyingPrimitives};
 
 /// A reference to a fixed-size sequence of bits anywhere in underlying
 /// [primitives].
@@ -27,12 +32,9 @@ impl BitStr {
     /// Returns the number of referenced bits.
     pub fn len(&self) -> usize {
         struct Executor;
-        impl DstRefReprExecutor for Executor {
+        impl DstRefReprExecutor<'_> for Executor {
             type Output = usize;
-            fn execute<U: crate::PrimitiveType>(
-                self,
-                components: RefComponents<U>,
-            ) -> Self::Output {
+            fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
                 components.bit_count
             }
         }
@@ -44,14 +46,90 @@ impl BitStr {
         self.len() == 0
     }
 
+    /// Returns the value of the bit at the specified index.
+    ///
+    /// Returns `None` if the index is invalid.
+    pub fn at(&self, index: usize) -> Option<BitValue> {
+        self.at_ref(index).map(|bit_ref| bit_ref.get())
+    }
+
+    /// Returns a reference to the bit at the specified index.
+    ///
+    /// Returns `None` if the index is invalid.
+    pub fn at_ref(&self, index: usize) -> Option<&Bit> {
+        struct Executor<'a> {
+            index: usize,
+            phantom: PhantomData<&'a ()>,
+        }
+        impl<'a> DstRefReprExecutor<'a> for Executor<'a> {
+            type Output = Option<&'a Bit>;
+
+            fn execute<U: PrimitiveType + 'a>(
+                self,
+                components: RefComponents<'a, U>,
+            ) -> Self::Output {
+                let bit_index = components.offset + self.index;
+                if bit_index < components.bit_count {
+                    let bit_ref = Bit::new_ref(components.get_ref(), bit_index);
+                    Some(bit_ref)
+                } else {
+                    None
+                }
+            }
+        }
+
+        self.repr().decode_and_execute(Executor {
+            index,
+            phantom: PhantomData,
+        })
+    }
+
+    /// Returns a mutable reference to the bit at the specified index.
+    ///
+    /// Returns `None` if the index is invalid.
+    pub fn at_mut(&mut self, index: usize) -> Option<&mut Bit> {
+        struct Executor<'a> {
+            index: usize,
+            phantom: PhantomData<&'a mut ()>,
+        }
+        impl<'a> DstMutRefReprExecutor<'a> for Executor<'a> {
+            type Output = Option<&'a mut Bit>;
+
+            fn execute<U: PrimitiveType + 'a>(
+                self,
+                mut components: MutRefComponents<'a, U>,
+            ) -> Self::Output {
+                let bit_index = components.offset + self.index;
+                if bit_index < components.bit_count {
+                    let bit_ref = Bit::new_mut(components.get_ref(), bit_index);
+                    Some(bit_ref)
+                } else {
+                    None
+                }
+            }
+        }
+
+        self.repr_mut().decode_and_execute(Executor {
+            index,
+            phantom: PhantomData,
+        })
+    }
+
     fn repr(&self) -> DstRefRepr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    fn repr_mut(&mut self) -> DstMutRefRepr {
         unsafe { std::mem::transmute(self) }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{BitStr, PrimitiveType};
+    use std::ops::Not;
+
+    use crate::{BitStr, BitValue, PrimitiveType};
+    use BitValue::{One, Zero};
 
     #[test]
     fn new_ref() {
@@ -77,5 +155,58 @@ mod tests {
         assert_len!(u32);
         assert_len!(u64);
         assert_len!(u128);
+    }
+
+    #[test]
+    fn at() {
+        let under = 0b10010011u8;
+        let bit_str = BitStr::new_ref(&under);
+
+        assert_eq!(bit_str.at(0), Some(One));
+        assert_eq!(bit_str.at(1), Some(One));
+        assert_eq!(bit_str.at(2), Some(Zero));
+        assert_eq!(bit_str.at(3), Some(Zero));
+        assert_eq!(bit_str.at(4), Some(One));
+        assert_eq!(bit_str.at(5), Some(Zero));
+        assert_eq!(bit_str.at(6), Some(Zero));
+        assert_eq!(bit_str.at(7), Some(One));
+        assert_eq!(bit_str.at(8), None);
+    }
+
+    #[test]
+    fn at_ref() {
+        let under = 0b10010011u8;
+        let bit_str = BitStr::new_ref(&under);
+
+        assert_eq!(bit_str.at_ref(0).unwrap().get(), One);
+        assert_eq!(bit_str.at_ref(1).unwrap().get(), One);
+        assert_eq!(bit_str.at_ref(2).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_ref(3).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_ref(4).unwrap().get(), One);
+        assert_eq!(bit_str.at_ref(5).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_ref(6).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_ref(7).unwrap().get(), One);
+        assert_eq!(bit_str.at_ref(8), None);
+    }
+
+    #[test]
+    fn at_mut() {
+        let mut under = 0b10010011u8;
+        let bit_str = BitStr::new_mut(&mut under);
+
+        assert_eq!(bit_str.at_mut(0).unwrap().get(), One);
+        assert_eq!(bit_str.at_mut(1).unwrap().get(), One);
+        assert_eq!(bit_str.at_mut(2).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_mut(3).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_mut(4).unwrap().get(), One);
+        assert_eq!(bit_str.at_mut(5).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_mut(6).unwrap().get(), Zero);
+        assert_eq!(bit_str.at_mut(7).unwrap().get(), One);
+        assert_eq!(bit_str.at_mut(8), None);
+
+        bit_str.at_mut(3).unwrap().modify(Not::not);
+        bit_str.at_mut(4).unwrap().modify(Not::not);
+
+        assert_eq!(under, 0b10001011);
     }
 }

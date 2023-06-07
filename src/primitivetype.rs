@@ -82,7 +82,7 @@ impl Discriminant {
         Self::U128,
     ];
 
-    pub(crate) fn execute<E: DiscriminantExecutor>(self, executor: E) -> E::Output {
+    pub(crate) fn execute<'a, E: DiscriminantExecutor<'a>>(self, executor: E) -> E::Output {
         match self {
             usize::DISCRIMINANT => executor.execute::<usize>(),
             u8::DISCRIMINANT => executor.execute::<u8>(),
@@ -94,7 +94,7 @@ impl Discriminant {
     }
 }
 
-pub(crate) trait DiscriminantExecutor {
+pub(crate) trait DiscriminantExecutor<'a> {
     type Output;
-    fn execute<U: PrimitiveType>(self) -> Self::Output;
+    fn execute<U: PrimitiveType + 'a>(self) -> Self::Output;
 }

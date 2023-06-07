@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
@@ -64,7 +65,7 @@ impl Bit {
     pub fn get(&self) -> BitValue {
         struct Executor;
 
-        impl DstRefReprExecutor for Executor {
+        impl DstRefReprExecutor<'_> for Executor {
             type Output = BitValue;
 
             fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
@@ -85,12 +86,12 @@ impl Bit {
             value: BitValue,
         }
 
-        impl DstMutRefReprExecutor for Executor {
+        impl<'a> DstMutRefReprExecutor<'a> for Executor {
             type Output = BitValue;
 
-            fn execute<P: PrimitiveType>(
+            fn execute<P: PrimitiveType + 'a>(
                 self,
-                mut components: MutRefComponents<P>,
+                mut components: MutRefComponents<'a, P>,
             ) -> Self::Output {
                 let mask = Mask::<P>::new(components.offset);
                 let under = components.get_ref();
@@ -128,11 +129,11 @@ impl Bit {
             f: F,
         }
 
-        impl<F: FnOnce(BitValue) -> BitValue> DstMutRefReprExecutor for Executor<F> {
+        impl<'a, F: FnOnce(BitValue) -> BitValue> DstMutRefReprExecutor<'a> for Executor<F> {
             type Output = ();
-            fn execute<U: PrimitiveType>(
+            fn execute<U: PrimitiveType + 'a>(
                 self,
-                mut components: MutRefComponents<U>,
+                mut components: MutRefComponents<'a, U>,
             ) -> Self::Output {
                 let mask = Mask::<U>::new(components.offset);
                 let under = components.get_ref();
@@ -214,6 +215,12 @@ impl PartialEq<Bit> for BitValue {
 impl Hash for Bit {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.get().hash(state);
+    }
+}
+
+impl Debug for Bit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.get(), f)
     }
 }
 

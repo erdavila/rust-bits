@@ -52,7 +52,7 @@ impl<'a> DstRefRepr<'a> {
         }
     }
 
-    pub(crate) fn decode_and_execute<E: DstRefReprExecutor>(self, executor: E) -> E::Output {
+    pub(crate) fn decode_and_execute<E: DstRefReprExecutor<'a>>(self, executor: E) -> E::Output {
         let DecodingValues {
             discriminant,
             offset,
@@ -69,10 +69,10 @@ impl<'a> DstRefRepr<'a> {
             untyped_components: UntypedRefComponents,
             repr_executor: E,
         }
-        impl<E: DstRefReprExecutor> DiscriminantExecutor for DiscrExecutor<E> {
+        impl<'b, E: DstRefReprExecutor<'b>> DiscriminantExecutor<'b> for DiscrExecutor<E> {
             type Output = E::Output;
 
-            fn execute<U: PrimitiveType>(self) -> Self::Output {
+            fn execute<U: PrimitiveType + 'b>(self) -> Self::Output {
                 let components = RefComponents::<U> {
                     ptr: self.untyped_components.ptr.cast(),
                     offset: self.untyped_components.offset,
@@ -167,7 +167,7 @@ struct BitCounts {
 
 fn bit_counts(discriminant: Discriminant) -> BitCounts {
     struct Executor;
-    impl DiscriminantExecutor for Executor {
+    impl DiscriminantExecutor<'_> for Executor {
         type Output = usize;
         fn execute<P: PrimitiveType>(self) -> Self::Output {
             P::BIT_COUNT
@@ -201,13 +201,13 @@ pub(crate) struct RefComponents<'a, P: PrimitiveType> {
 }
 
 #[duplicate_item(
-    RefComponents      ref_mut(type);
-    [RefComponents]    [&type];
-    [MutRefComponents] [&mut type];
+    RefComponents      ref_mut(type) ref_mut_lt(type);
+    [RefComponents]    [&type]       [&'a type];
+    [MutRefComponents] [&mut type]   [&'a mut type];
 )]
 impl<'a, P: PrimitiveType> RefComponents<'a, P> {
     #[allow(clippy::needless_arbitrary_self_type)]
-    pub fn get_ref(self: ref_mut([Self])) -> ref_mut([P]) {
+    pub fn get_ref(self: ref_mut([Self])) -> ref_mut_lt([P]) {
         unsafe { ref_mut([*self.ptr]) }
     }
 }
@@ -217,9 +217,9 @@ impl<'a, P: PrimitiveType> RefComponents<'a, P> {
     [DstRefReprExecutor]    [RefComponents];
     [DstMutRefReprExecutor] [MutRefComponents];
 )]
-pub(crate) trait DstRefReprExecutor {
+pub(crate) trait DstRefReprExecutor<'a> {
     type Output;
-    fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output;
+    fn execute<U: PrimitiveType + 'a>(self, components: RefComponents<'a, U>) -> Self::Output;
 }
 
 #[duplicate_item(
@@ -327,7 +327,7 @@ mod tests {
         }
 
         struct Executor;
-        impl DstRefReprExecutor for Executor {
+        impl<'a> DstRefReprExecutor<'a> for Executor {
             type Output = (UntypedRefComponents, Discriminant);
             fn execute<U: PrimitiveType>(self, components: RefComponents<U>) -> Self::Output {
                 let components = UntypedRefComponents {
