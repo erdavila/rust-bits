@@ -11,6 +11,7 @@ use crate::{Bit, BitValue, PrimitiveType, UnderlyingPrimitives};
 ///
 /// [primitives]: crate::PrimitiveType
 #[repr(C)]
+#[derive(Eq)]
 pub struct BitStr {
     _unsized: [()],
 }
@@ -124,6 +125,20 @@ impl BitStr {
     }
 }
 
+impl PartialEq for BitStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && {
+            // TODO: implement a more optimized comparison
+            for i in 0..self.len() {
+                if self.at(i) != other.at(i) {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Not;
@@ -208,5 +223,24 @@ mod tests {
         bit_str.at_mut(4).unwrap().modify(Not::not);
 
         assert_eq!(under, 0b10001011);
+    }
+
+    #[test]
+    fn eq() {
+        let under1 = 0b10010011u8;
+        let under2 = 0b10010011u8;
+        let under3 = 0b01101100u8;
+
+        let bit_str1 = BitStr::new_ref(&under1);
+        let bit_str2 = BitStr::new_ref(&under2);
+        let bit_str3 = BitStr::new_ref(&under3);
+
+        assert!(bit_str1 == bit_str1);
+        assert!(bit_str1 == bit_str2);
+        assert!(bit_str1 != bit_str3);
+
+
+        // TODO: compare with String
+        // TODO: compare with &String
     }
 }

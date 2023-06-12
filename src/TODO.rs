@@ -79,6 +79,10 @@ fn accessing() {
     let bit: Option<&Bit> = bit_str.at_ref(index);
     let bit: Option<&mut Bit> = bit_str.at_mut(index);
 
+    let range: impl RangeBounds<usize>;
+    let slice: Option<&BitStr> = bit_str.range_at(range);
+    let slice: Option<&mut BitStr> = bit_str.range_at_mut(range);
+
     let index: usize;
     let bit: Option<u8> = bit_str.primitive_at::<u8>(index); // ... and other primitive types
     let bit: Option<&Primitive<u8>> = bit_str.primitive_at_ref::<u8>(index); // ... and other primitive types
