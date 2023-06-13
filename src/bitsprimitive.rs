@@ -1,7 +1,38 @@
-pub trait BitsPrimitive {}
+/// Represents a basic element whose bits can be manipulated and referenced.
+///
+/// It provides a common interface for all bit handling operations.
+///
+/// It has implementations for all numeric unsigned types.
+pub trait BitsPrimitive {
+    const DISCRIMINANT: BitsPrimitiveDiscriminant;
+    const BIT_COUNT: usize;
+    const ZERO: Self;
+}
 
-impl BitsPrimitive for u8 {}
-impl BitsPrimitive for u16 {}
-impl BitsPrimitive for u32 {}
-impl BitsPrimitive for u64 {}
-impl BitsPrimitive for u128 {}
+macro_rules! impl_primitive {
+    ($type:ty, $discriminant:ident) => {
+        impl BitsPrimitive for $type {
+            const DISCRIMINANT: BitsPrimitiveDiscriminant =
+                BitsPrimitiveDiscriminant::$discriminant;
+            const BIT_COUNT: usize = <$type>::BITS as usize;
+            const ZERO: Self = 0;
+        }
+    };
+}
+
+impl_primitive!(usize, Usize);
+impl_primitive!(u8, U8);
+impl_primitive!(u16, U16);
+impl_primitive!(u32, U32);
+impl_primitive!(u64, U64);
+impl_primitive!(u128, U128);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BitsPrimitiveDiscriminant {
+    Usize,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+}

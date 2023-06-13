@@ -20,6 +20,8 @@ mod bitsprimitive;
 mod bitstr;
 mod bitstring;
 mod bitvalue;
+mod refrepr;
+mod utils;
 
 pub use bit::*;
 pub use bitsource::*;
