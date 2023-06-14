@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-use crate::utils::{values_count_to_bit_count, BitPattern};
+use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
 use crate::{BitsPrimitive, BitsPrimitiveDiscriminant};
 
 const DISCRIMINANT_BIT_COUNT: usize = 3;
@@ -43,6 +43,18 @@ pub(crate) struct EncodedMetadata(usize);
 impl EncodedMetadata {
     fn encode(metadata: Metadata) -> Self {
         let bit_counts = ComponentsBitCounts::from(metadata.underlying_primitive);
+
+        let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
+        assert!(
+            metadata.offset <= max_offset,
+            "offset too large for underlying type"
+        );
+
+        let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
+        assert!(
+            metadata.bit_count <= max_bit_count,
+            "bit_count too large for underlying type"
+        );
 
         let mut bits = MetadataBits::from(metadata.bit_count);
         bits.push(metadata.offset, bit_counts.offset_bit_count);
@@ -319,4 +331,54 @@ mod tests {
         assert_metadata_encoding_limits_for_type!(u64);
         assert_metadata_encoding_limits_for_type!(u128);
     }
+
+    macro_rules! test_offset_too_large_for_type {
+        ($type:ty, $fn:ident) => {
+            #[test]
+            #[should_panic = "offset too large for underlying type"]
+            fn $fn() {
+                let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
+                let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
+                let metadata = Metadata {
+                    underlying_primitive: <$type>::DISCRIMINANT,
+                    offset: max_offset + 1,
+                    bit_count: 0,
+                };
+
+                metadata.encode();
+            }
+        };
+    }
+
+    test_offset_too_large_for_type!(usize, offset_too_large_for_usize);
+    test_offset_too_large_for_type!(u8, offset_too_large_for_u8);
+    test_offset_too_large_for_type!(u16, offset_too_large_for_u16);
+    test_offset_too_large_for_type!(u32, offset_too_large_for_u32);
+    test_offset_too_large_for_type!(u64, offset_too_large_for_u64);
+    test_offset_too_large_for_type!(u128, offset_too_large_for_u128);
+
+    macro_rules! test_bit_count_too_large_for_type {
+        ($type:ty, $fn:ident) => {
+            #[test]
+            #[should_panic = "bit_count too large for underlying type"]
+            fn $fn() {
+                let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
+                let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
+                let metadata = Metadata {
+                    underlying_primitive: <$type>::DISCRIMINANT,
+                    offset: 0,
+                    bit_count: max_bit_count + 1,
+                };
+
+                metadata.encode();
+            }
+        };
+    }
+
+    test_bit_count_too_large_for_type!(usize, bit_count_too_large_for_usize);
+    test_bit_count_too_large_for_type!(u8, bit_count_too_large_for_u8);
+    test_bit_count_too_large_for_type!(u16, bit_count_too_large_for_u16);
+    test_bit_count_too_large_for_type!(u32, bit_count_too_large_for_u32);
+    test_bit_count_too_large_for_type!(u64, bit_count_too_large_for_u64);
+    test_bit_count_too_large_for_type!(u128, bit_count_too_large_for_u128);
 }
