@@ -22,9 +22,45 @@ pub(crate) struct RefRepr {
 impl RefRepr {
     #[inline]
     fn encode(components: UntypedRefComponents) -> Self {
+        fn normalize<P: BitsPrimitive>(ptr: NonNull<()>, offset: usize) -> (NonNull<()>, usize) {
+            let index = offset / P::BIT_COUNT;
+            let offset = offset % P::BIT_COUNT;
+
+            let ptr = ptr.cast::<P>().as_ptr();
+            let ptr = unsafe { NonNull::new_unchecked(ptr.add(index)) };
+
+            (ptr.cast(), offset)
+        }
+
+        let metadata = components.metadata;
+
+        let (ptr, offset) = match metadata.underlying_primitive {
+            BitsPrimitiveDiscriminant::Usize => normalize::<usize>(components.ptr, metadata.offset),
+            BitsPrimitiveDiscriminant::U8 => normalize::<u8>(components.ptr, metadata.offset),
+            BitsPrimitiveDiscriminant::U16 => normalize::<u16>(components.ptr, metadata.offset),
+            BitsPrimitiveDiscriminant::U32 => normalize::<u32>(components.ptr, metadata.offset),
+            BitsPrimitiveDiscriminant::U64 => normalize::<u64>(components.ptr, metadata.offset),
+            BitsPrimitiveDiscriminant::U128 => normalize::<u128>(components.ptr, metadata.offset),
+        };
+
+        let bit_counts = ComponentsBitCounts::from(metadata.underlying_primitive);
+
+        let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
+        assert!(
+            metadata.bit_count <= max_bit_count,
+            "bit_count too large for underlying type"
+        );
+
+        let mut bits = MetadataBits::from(metadata.bit_count);
+        bits.push(offset, bit_counts.offset_bit_count);
+        bits.push(
+            encode_discriminant(metadata.underlying_primitive),
+            DISCRIMINANT_BIT_COUNT,
+        );
+
         RefRepr {
-            ptr: components.ptr,
-            metadata: components.metadata.encode(),
+            ptr,
+            metadata: EncodedMetadata(bits.0),
         }
     }
 
@@ -41,31 +77,6 @@ impl RefRepr {
 pub(crate) struct EncodedMetadata(usize);
 
 impl EncodedMetadata {
-    fn encode(metadata: Metadata) -> Self {
-        let bit_counts = ComponentsBitCounts::from(metadata.underlying_primitive);
-
-        let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
-        assert!(
-            metadata.offset <= max_offset,
-            "offset too large for underlying type"
-        );
-
-        let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
-        assert!(
-            metadata.bit_count <= max_bit_count,
-            "bit_count too large for underlying type"
-        );
-
-        let mut bits = MetadataBits::from(metadata.bit_count);
-        bits.push(metadata.offset, bit_counts.offset_bit_count);
-        bits.push(
-            encode_discriminant(metadata.underlying_primitive),
-            DISCRIMINANT_BIT_COUNT,
-        );
-
-        EncodedMetadata(bits.0)
-    }
-
     pub(crate) fn decode(&self) -> Metadata {
         let mut metadata_bits = MetadataBits::from(self.0);
 
@@ -90,13 +101,6 @@ pub(crate) struct Metadata {
     underlying_primitive: BitsPrimitiveDiscriminant,
     offset: usize,
     pub(crate) bit_count: usize,
-}
-
-impl Metadata {
-    #[inline]
-    fn encode(self) -> EncodedMetadata {
-        EncodedMetadata::encode(self)
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -182,12 +186,11 @@ mod tests {
     use std::collections::HashSet;
     use std::ptr::NonNull;
 
-    use crate::refrepr::{
-        encode_discriminant, ComponentsBitCounts, EncodedMetadata, Metadata, UntypedRefComponents,
-        ALL_DISCRIMINANTS, DISCRIMINANT_BIT_COUNT,
-    };
+    use crate::refrepr::{encode_discriminant, EncodedMetadata, Metadata, DISCRIMINANT_BIT_COUNT};
     use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
     use crate::BitsPrimitive;
+
+    use super::{ComponentsBitCounts, UntypedRefComponents, ALL_DISCRIMINANTS};
 
     #[test]
     fn discriminant_encoding() {
@@ -332,53 +335,79 @@ mod tests {
         assert_metadata_encoding_limits_for_type!(u128);
     }
 
-    macro_rules! test_offset_too_large_for_type {
-        ($type:ty, $fn:ident) => {
-            #[test]
-            #[should_panic = "offset too large for underlying type"]
-            fn $fn() {
-                let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
-                let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
-                let metadata = Metadata {
-                    underlying_primitive: <$type>::DISCRIMINANT,
-                    offset: max_offset + 1,
-                    bit_count: 0,
-                };
-
-                metadata.encode();
-            }
-        };
-    }
-
-    test_offset_too_large_for_type!(usize, offset_too_large_for_usize);
-    test_offset_too_large_for_type!(u8, offset_too_large_for_u8);
-    test_offset_too_large_for_type!(u16, offset_too_large_for_u16);
-    test_offset_too_large_for_type!(u32, offset_too_large_for_u32);
-    test_offset_too_large_for_type!(u64, offset_too_large_for_u64);
-    test_offset_too_large_for_type!(u128, offset_too_large_for_u128);
-
-    macro_rules! test_bit_count_too_large_for_type {
+    macro_rules! test_bit_count_too_large {
         ($type:ty, $fn:ident) => {
             #[test]
             #[should_panic = "bit_count too large for underlying type"]
             fn $fn() {
+                let under: $type = <$type>::ZERO;
                 let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
                 let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
-                let metadata = Metadata {
-                    underlying_primitive: <$type>::DISCRIMINANT,
-                    offset: 0,
-                    bit_count: max_bit_count + 1,
+                let components = UntypedRefComponents {
+                    ptr: NonNull::from(&under).cast(),
+                    metadata: Metadata {
+                        underlying_primitive: <$type>::DISCRIMINANT,
+                        offset: 0,
+                        bit_count: max_bit_count + 1,
+                    },
                 };
 
-                metadata.encode();
+                components.encode();
             }
         };
     }
 
-    test_bit_count_too_large_for_type!(usize, bit_count_too_large_for_usize);
-    test_bit_count_too_large_for_type!(u8, bit_count_too_large_for_u8);
-    test_bit_count_too_large_for_type!(u16, bit_count_too_large_for_u16);
-    test_bit_count_too_large_for_type!(u32, bit_count_too_large_for_u32);
-    test_bit_count_too_large_for_type!(u64, bit_count_too_large_for_u64);
-    test_bit_count_too_large_for_type!(u128, bit_count_too_large_for_u128);
+    test_bit_count_too_large!(usize, bit_count_too_large_for_usize);
+    test_bit_count_too_large!(u8, bit_count_too_large_for_u8);
+    test_bit_count_too_large!(u16, bit_count_too_large_for_u16);
+    test_bit_count_too_large!(u32, bit_count_too_large_for_u32);
+    test_bit_count_too_large!(u64, bit_count_too_large_for_u64);
+    test_bit_count_too_large!(u128, bit_count_too_large_for_u128);
+
+    #[test]
+    fn pointer_and_offset_normalization() {
+        macro_rules! assert_normalization {
+            ($type:ty, $offset:expr, $expected_index:expr, $expected_offset:expr) => {
+                let mut memory = [<$type>::ZERO, <$type>::ZERO, <$type>::ZERO];
+                let under = &mut memory;
+                let ptr = NonNull::from(&under[0]);
+                let components = UntypedRefComponents {
+                    ptr: ptr.cast(),
+                    metadata: Metadata {
+                        underlying_primitive: <$type>::DISCRIMINANT,
+                        offset: $offset,
+                        bit_count: 1,
+                    },
+                };
+
+                let repr = components.encode();
+                let decoded = repr.decode();
+
+                assert_eq!(
+                    decoded.ptr.as_ptr(),
+                    unsafe { ptr.as_ptr().add($expected_index) }.cast()
+                );
+                assert_eq!(decoded.metadata.offset, $expected_offset);
+            };
+        }
+
+        macro_rules! assert_normalization_for_type {
+            ($type:ty) => {
+                assert_normalization!($type, 0, 0, 0);
+                assert_normalization!($type, <$type>::BIT_COUNT - 1, 0, <$type>::BIT_COUNT - 1);
+                assert_normalization!($type, <$type>::BIT_COUNT, 1, 0);
+                assert_normalization!($type, <$type>::BIT_COUNT + 1, 1, 1);
+                assert_normalization!($type, 2 * <$type>::BIT_COUNT - 1, 1, <$type>::BIT_COUNT - 1);
+                assert_normalization!($type, 2 * <$type>::BIT_COUNT, 2, 0);
+                assert_normalization!($type, 2 * <$type>::BIT_COUNT + 1, 2, 1);
+            };
+        }
+
+        assert_normalization_for_type!(usize);
+        assert_normalization_for_type!(u8);
+        assert_normalization_for_type!(u16);
+        assert_normalization_for_type!(u32);
+        assert_normalization_for_type!(u64);
+        assert_normalization_for_type!(u128);
+    }
 }
