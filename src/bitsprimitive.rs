@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::ops::{BitAnd, BitAndAssign, Shr};
+use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr};
 
 /// Represents a basic element whose bits can be manipulated and referenced.
 ///
@@ -11,6 +11,9 @@ where
     Self: Sized + Copy + Eq + Debug,
     Self: BitAnd<Output = Self>,
     Self: BitAndAssign,
+    Self: BitOrAssign,
+    Self: Not<Output = Self>,
+    Self: Shl<usize, Output = Self>,
     Self: Shr<usize, Output = Self>,
 {
     const DISCRIMINANT: BitsPrimitiveDiscriminant;

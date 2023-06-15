@@ -33,9 +33,8 @@ impl Bit {
         debug_assert_eq!(components.metadata.bit_count, 1);
 
         fn get<U: BitsPrimitive>(ptr: NonNull<()>, offset: usize) -> BitValue {
-            let ptr = ptr.cast::<U>();
-            let value = unsafe { *ptr.as_ref() };
-            BitValue::from(((value >> offset) & U::ONE) == U::ONE)
+            let accessor = BitAccessor::new(ptr.cast::<U>(), offset);
+            accessor.get()
         }
 
         match components.metadata.underlying_primitive {
@@ -58,12 +57,76 @@ impl Bit {
         }
     }
 
+    /// Sets the value of the referenced bit.
+    ///
+    /// It returns the previous value.
+    #[inline]
     pub fn write(&mut self, value: BitValue) -> BitValue {
-        todo!()
+        let repr: RefRepr = unsafe { std::mem::transmute(self) };
+        let components = repr.decode();
+        debug_assert_eq!(components.metadata.bit_count, 1);
+
+        fn set<U: BitsPrimitive>(ptr: NonNull<()>, offset: usize, value: BitValue) -> BitValue {
+            let mut accessor = BitAccessor::new(ptr.cast::<U>(), offset);
+            let previous_value = accessor.get();
+            accessor.set(value);
+            previous_value
+        }
+
+        match components.metadata.underlying_primitive {
+            BitsPrimitiveDiscriminant::Usize => {
+                set::<usize>(components.ptr, components.metadata.offset, value)
+            }
+            BitsPrimitiveDiscriminant::U8 => {
+                set::<u8>(components.ptr, components.metadata.offset, value)
+            }
+            BitsPrimitiveDiscriminant::U16 => {
+                set::<u16>(components.ptr, components.metadata.offset, value)
+            }
+            BitsPrimitiveDiscriminant::U32 => {
+                set::<u32>(components.ptr, components.metadata.offset, value)
+            }
+            BitsPrimitiveDiscriminant::U64 => {
+                set::<u64>(components.ptr, components.metadata.offset, value)
+            }
+            BitsPrimitiveDiscriminant::U128 => {
+                set::<u128>(components.ptr, components.metadata.offset, value)
+            }
+        }
     }
 
     pub fn modify<F: FnOnce(BitValue) -> BitValue>(&mut self, f: F) {
         todo!()
+    }
+}
+
+struct BitAccessor<P: BitsPrimitive> {
+    ptr: NonNull<P>,
+    mask: P,
+}
+
+impl<P: BitsPrimitive> BitAccessor<P> {
+    #[inline]
+    fn new(ptr: NonNull<P>, bit_index: usize) -> Self {
+        BitAccessor {
+            ptr,
+            mask: P::ONE << bit_index,
+        }
+    }
+
+    #[inline]
+    fn get(&self) -> BitValue {
+        BitValue::from((unsafe { *self.ptr.as_ref() } & self.mask) != P::ZERO)
+    }
+
+    #[inline]
+    fn set(&mut self, value: BitValue) {
+        let mut_ref = unsafe { self.ptr.as_mut() };
+
+        match value {
+            BitValue::Zero => *mut_ref &= !self.mask,
+            BitValue::One => *mut_ref |= self.mask,
+        }
     }
 }
 
@@ -97,5 +160,26 @@ mod tests {
         assert_eq!(new_ref(5).read(), Zero);
         assert_eq!(new_ref(6).read(), Zero);
         assert_eq!(new_ref(7).read(), One);
+    }
+
+    #[test]
+    fn write() {
+        let under = 0b10010011u8;
+
+        let new_mut = |bit_index| -> &mut Bit {
+            let components = TypedRefComponents {
+                ptr: NonNull::from(&under),
+                offset: bit_index,
+                bit_count: 1,
+            };
+            let repr = components.encode();
+            unsafe { std::mem::transmute(repr) }
+        };
+
+        assert_eq!(new_mut(0).write(Zero), One);
+        assert_eq!(new_mut(1).write(One), One);
+        assert_eq!(new_mut(2).write(Zero), Zero);
+        assert_eq!(new_mut(3).write(One), Zero);
+        assert_eq!(under, 0b10011010);
     }
 }
