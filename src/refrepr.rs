@@ -98,21 +98,46 @@ impl EncodedMetadata {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Metadata {
-    underlying_primitive: BitsPrimitiveDiscriminant,
-    offset: usize,
+    pub(crate) underlying_primitive: BitsPrimitiveDiscriminant,
+    pub(crate) offset: usize,
     pub(crate) bit_count: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UntypedRefComponents {
-    ptr: NonNull<()>,
-    metadata: Metadata,
+    pub(crate) ptr: NonNull<()>,
+    pub(crate) metadata: Metadata,
 }
 
 impl UntypedRefComponents {
     #[inline]
     pub(crate) fn encode(self) -> RefRepr {
         RefRepr::encode(self)
+    }
+}
+
+pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
+    pub(crate) ptr: NonNull<P>,
+    pub(crate) offset: usize,
+    pub(crate) bit_count: usize,
+}
+
+impl<P: BitsPrimitive> TypedRefComponents<P> {
+    #[inline]
+    pub(crate) fn to_untyped(&self) -> UntypedRefComponents {
+        UntypedRefComponents {
+            ptr: self.ptr.cast(),
+            metadata: Metadata {
+                underlying_primitive: P::DISCRIMINANT,
+                offset: self.offset,
+                bit_count: self.bit_count,
+            },
+        }
+    }
+
+    #[inline]
+    pub(crate) fn encode(self) -> RefRepr {
+        self.to_untyped().encode()
     }
 }
 
