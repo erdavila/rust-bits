@@ -1,12 +1,22 @@
+use std::fmt::Debug;
+use std::ops::{BitAnd, BitAndAssign, Shr};
+
 /// Represents a basic element whose bits can be manipulated and referenced.
 ///
 /// It provides a common interface for all bit handling operations.
 ///
 /// It has implementations for all numeric unsigned types.
-pub trait BitsPrimitive {
+pub trait BitsPrimitive
+where
+    Self: Sized + Copy + Eq + Debug,
+    Self: BitAnd<Output = Self>,
+    Self: BitAndAssign,
+    Self: Shr<usize, Output = Self>,
+{
     const DISCRIMINANT: BitsPrimitiveDiscriminant;
     const BIT_COUNT: usize;
     const ZERO: Self;
+    const ONE: Self;
 }
 
 macro_rules! impl_primitive {
@@ -16,6 +26,7 @@ macro_rules! impl_primitive {
                 BitsPrimitiveDiscriminant::$discriminant;
             const BIT_COUNT: usize = <$type>::BITS as usize;
             const ZERO: Self = 0;
+            const ONE: Self = 1;
         }
     };
 }
