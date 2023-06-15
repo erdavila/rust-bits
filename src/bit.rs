@@ -1,8 +1,8 @@
 use std::ptr::NonNull;
 
 use crate::bitvalue::BitValue;
-use crate::refrepr::{RefRepr, UntypedRefComponents};
-use crate::{BitsPrimitive, BitsPrimitiveSelector};
+use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::BitsPrimitive;
 
 /// Representation of a reference to a single bit in a [underlying memory].
 ///
@@ -28,28 +28,17 @@ impl Bit {
     /// Gets the value of the referenced bit.
     #[inline]
     pub fn read(&self) -> BitValue {
-        struct Selector {
-            components: UntypedRefComponents,
-        }
-        impl BitsPrimitiveSelector for Selector {
+        struct Selector;
+        impl RefComponentsSelector for Selector {
             type Output = BitValue;
             #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let accessor = BitAccessor::new(
-                    self.components.ptr.cast::<U>(),
-                    self.components.metadata.offset,
-                );
+            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
+                let accessor = BitAccessor::new(components.ptr, components.offset);
                 accessor.get()
             }
         }
 
-        let repr: RefRepr = unsafe { std::mem::transmute(self) };
-        let components = repr.decode();
-        debug_assert_eq!(components.metadata.bit_count, 1);
-        components
-            .metadata
-            .underlying_primitive
-            .select(Selector { components })
+        self.components().select(Selector)
     }
 
     /// Sets the value of the referenced bit.
@@ -59,29 +48,19 @@ impl Bit {
     pub fn write(&mut self, value: BitValue) -> BitValue {
         struct Selector {
             value: BitValue,
-            components: UntypedRefComponents,
         }
-        impl BitsPrimitiveSelector for Selector {
+        impl RefComponentsSelector for Selector {
             type Output = BitValue;
             #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let mut accessor = BitAccessor::new(
-                    self.components.ptr.cast::<U>(),
-                    self.components.metadata.offset,
-                );
+            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
+                let mut accessor = BitAccessor::new(components.ptr, components.offset);
                 let previous_value = accessor.get();
                 accessor.set(self.value);
                 previous_value
             }
         }
 
-        let repr: RefRepr = unsafe { std::mem::transmute(self) };
-        let components = repr.decode();
-        debug_assert_eq!(components.metadata.bit_count, 1);
-        components
-            .metadata
-            .underlying_primitive
-            .select(Selector { value, components })
+        self.components().select(Selector { value })
     }
 
     /// Allows retrieving and setting the bit value in a single operation.
@@ -95,29 +74,27 @@ impl Bit {
     pub fn modify<F: FnOnce(BitValue) -> BitValue>(&mut self, f: F) {
         struct Selector<F: FnOnce(BitValue) -> BitValue> {
             f: F,
-            components: UntypedRefComponents,
         }
-        impl<F: FnOnce(BitValue) -> BitValue> BitsPrimitiveSelector for Selector<F> {
+        impl<F: FnOnce(BitValue) -> BitValue> RefComponentsSelector for Selector<F> {
             type Output = ();
             #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let mut accessor = BitAccessor::new(
-                    self.components.ptr.cast::<U>(),
-                    self.components.metadata.offset,
-                );
+            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
+                let mut accessor = BitAccessor::new(components.ptr, components.offset);
                 let previous_value = accessor.get();
                 let new_value = (self.f)(previous_value);
                 accessor.set(new_value);
             }
         }
 
+        self.components().select(Selector { f });
+    }
+
+    #[inline]
+    fn components(&self) -> UntypedRefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
         debug_assert_eq!(components.metadata.bit_count, 1);
         components
-            .metadata
-            .underlying_primitive
-            .select(Selector { f, components });
     }
 }
 

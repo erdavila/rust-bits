@@ -127,6 +127,39 @@ impl UntypedRefComponents {
     pub(crate) fn encode(self) -> RefRepr {
         RefRepr::encode(self)
     }
+
+    #[inline]
+    pub(crate) fn select<S: RefComponentsSelector>(self, selector: S) -> S::Output {
+        struct PSelector<S: RefComponentsSelector> {
+            selector: S,
+            untyped_components: UntypedRefComponents,
+        }
+
+        impl<S: RefComponentsSelector> BitsPrimitiveSelector for PSelector<S> {
+            type Output = S::Output;
+
+            #[inline]
+            fn select<U: BitsPrimitive>(self) -> Self::Output {
+                let components = TypedRefComponents {
+                    ptr: self.untyped_components.ptr.cast::<U>(),
+                    offset: self.untyped_components.metadata.offset,
+                    bit_count: self.untyped_components.metadata.bit_count,
+                };
+                self.selector.select(components)
+            }
+        }
+
+        self.metadata.underlying_primitive.select(PSelector {
+            selector,
+            untyped_components: self,
+        })
+    }
+}
+
+pub(crate) trait RefComponentsSelector {
+    type Output;
+
+    fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output;
 }
 
 pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
