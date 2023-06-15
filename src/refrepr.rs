@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 
 use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
-use crate::{BitsPrimitive, BitsPrimitiveDiscriminant};
+use crate::{BitsPrimitive, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 
 const DISCRIMINANT_BIT_COUNT: usize = 3;
 const ALL_DISCRIMINANTS: [BitsPrimitiveDiscriminant; 6] = [
@@ -22,26 +22,12 @@ pub(crate) struct RefRepr {
 impl RefRepr {
     #[inline]
     fn encode(components: UntypedRefComponents) -> Self {
-        fn normalize<P: BitsPrimitive>(ptr: NonNull<()>, offset: usize) -> (NonNull<()>, usize) {
-            let index = offset / P::BIT_COUNT;
-            let offset = offset % P::BIT_COUNT;
-
-            let ptr = ptr.cast::<P>().as_ptr();
-            let ptr = unsafe { NonNull::new_unchecked(ptr.add(index)) };
-
-            (ptr.cast(), offset)
-        }
-
         let metadata = components.metadata;
-
-        let (ptr, offset) = match metadata.underlying_primitive {
-            BitsPrimitiveDiscriminant::Usize => normalize::<usize>(components.ptr, metadata.offset),
-            BitsPrimitiveDiscriminant::U8 => normalize::<u8>(components.ptr, metadata.offset),
-            BitsPrimitiveDiscriminant::U16 => normalize::<u16>(components.ptr, metadata.offset),
-            BitsPrimitiveDiscriminant::U32 => normalize::<u32>(components.ptr, metadata.offset),
-            BitsPrimitiveDiscriminant::U64 => normalize::<u64>(components.ptr, metadata.offset),
-            BitsPrimitiveDiscriminant::U128 => normalize::<u128>(components.ptr, metadata.offset),
-        };
+        let (ptr, offset) = Self::normalize(
+            components.ptr,
+            metadata.offset,
+            metadata.underlying_primitive,
+        );
 
         let bit_counts = ComponentsBitCounts::from(metadata.underlying_primitive);
 
@@ -62,6 +48,33 @@ impl RefRepr {
             ptr,
             metadata: EncodedMetadata(bits.0),
         }
+    }
+
+    #[inline]
+    fn normalize(
+        ptr: NonNull<()>,
+        offset: usize,
+        underlying_primitive: BitsPrimitiveDiscriminant,
+    ) -> (NonNull<()>, usize) {
+        struct Selector {
+            ptr: NonNull<()>,
+            offset: usize,
+        }
+        impl BitsPrimitiveSelector for Selector {
+            type Output = (NonNull<()>, usize);
+            #[inline]
+            fn select<U: BitsPrimitive>(self) -> Self::Output {
+                let index = self.offset / U::BIT_COUNT;
+                let offset = self.offset % U::BIT_COUNT;
+
+                let ptr = self.ptr.cast::<U>().as_ptr();
+                let ptr = unsafe { NonNull::new_unchecked(ptr.add(index)) };
+
+                (ptr.cast(), offset)
+            }
+        }
+
+        underlying_primitive.select(Selector { ptr, offset })
     }
 
     #[inline]
@@ -149,14 +162,15 @@ struct ComponentsBitCounts {
 
 impl From<BitsPrimitiveDiscriminant> for ComponentsBitCounts {
     fn from(discr: BitsPrimitiveDiscriminant) -> Self {
-        let primitive_bit_count = match discr {
-            BitsPrimitiveDiscriminant::Usize => usize::BIT_COUNT,
-            BitsPrimitiveDiscriminant::U8 => u8::BIT_COUNT,
-            BitsPrimitiveDiscriminant::U16 => u16::BIT_COUNT,
-            BitsPrimitiveDiscriminant::U32 => u32::BIT_COUNT,
-            BitsPrimitiveDiscriminant::U64 => u64::BIT_COUNT,
-            BitsPrimitiveDiscriminant::U128 => u128::BIT_COUNT,
-        };
+        struct Selector;
+        impl BitsPrimitiveSelector for Selector {
+            type Output = usize;
+            #[inline]
+            fn select<U: BitsPrimitive>(self) -> Self::Output {
+                U::BIT_COUNT
+            }
+        }
+        let primitive_bit_count = discr.select(Selector);
 
         let offset_bit_count = values_count_to_bit_count(primitive_bit_count);
         let bit_count_bit_count = usize::BIT_COUNT - DISCRIMINANT_BIT_COUNT - offset_bit_count;

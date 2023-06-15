@@ -50,3 +50,23 @@ pub enum BitsPrimitiveDiscriminant {
     U64,
     U128,
 }
+
+impl BitsPrimitiveDiscriminant {
+    #[inline]
+    pub(crate) fn select<S: BitsPrimitiveSelector>(self, selector: S) -> S::Output {
+        match self {
+            BitsPrimitiveDiscriminant::Usize => selector.select::<usize>(),
+            BitsPrimitiveDiscriminant::U8 => selector.select::<u8>(),
+            BitsPrimitiveDiscriminant::U16 => selector.select::<u16>(),
+            BitsPrimitiveDiscriminant::U32 => selector.select::<u32>(),
+            BitsPrimitiveDiscriminant::U64 => selector.select::<u64>(),
+            BitsPrimitiveDiscriminant::U128 => selector.select::<u128>(),
+        }
+    }
+}
+
+pub(crate) trait BitsPrimitiveSelector {
+    type Output;
+
+    fn select<U: BitsPrimitive>(self) -> Self::Output;
+}

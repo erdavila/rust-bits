@@ -1,8 +1,8 @@
 use std::ptr::NonNull;
 
 use crate::bitvalue::BitValue;
-use crate::refrepr::RefRepr;
-use crate::{BitsPrimitive, BitsPrimitiveDiscriminant};
+use crate::refrepr::{RefRepr, UntypedRefComponents};
+use crate::{BitsPrimitive, BitsPrimitiveSelector};
 
 /// Representation of a reference to a single bit in a [underlying memory].
 ///
@@ -28,33 +28,28 @@ impl Bit {
     /// Gets the value of the referenced bit.
     #[inline]
     pub fn read(&self) -> BitValue {
+        struct Selector {
+            components: UntypedRefComponents,
+        }
+        impl BitsPrimitiveSelector for Selector {
+            type Output = BitValue;
+            #[inline]
+            fn select<U: BitsPrimitive>(self) -> Self::Output {
+                let accessor = BitAccessor::new(
+                    self.components.ptr.cast::<U>(),
+                    self.components.metadata.offset,
+                );
+                accessor.get()
+            }
+        }
+
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
         debug_assert_eq!(components.metadata.bit_count, 1);
-
-        fn get<U: BitsPrimitive>(ptr: NonNull<()>, offset: usize) -> BitValue {
-            let accessor = BitAccessor::new(ptr.cast::<U>(), offset);
-            accessor.get()
-        }
-
-        match components.metadata.underlying_primitive {
-            BitsPrimitiveDiscriminant::Usize => {
-                get::<usize>(components.ptr, components.metadata.offset)
-            }
-            BitsPrimitiveDiscriminant::U8 => get::<u8>(components.ptr, components.metadata.offset),
-            BitsPrimitiveDiscriminant::U16 => {
-                get::<u16>(components.ptr, components.metadata.offset)
-            }
-            BitsPrimitiveDiscriminant::U32 => {
-                get::<u32>(components.ptr, components.metadata.offset)
-            }
-            BitsPrimitiveDiscriminant::U64 => {
-                get::<u64>(components.ptr, components.metadata.offset)
-            }
-            BitsPrimitiveDiscriminant::U128 => {
-                get::<u128>(components.ptr, components.metadata.offset)
-            }
-        }
+        components
+            .metadata
+            .underlying_primitive
+            .select(Selector { components })
     }
 
     /// Sets the value of the referenced bit.
@@ -62,37 +57,31 @@ impl Bit {
     /// It returns the previous value.
     #[inline]
     pub fn write(&mut self, value: BitValue) -> BitValue {
+        struct Selector {
+            value: BitValue,
+            components: UntypedRefComponents,
+        }
+        impl BitsPrimitiveSelector for Selector {
+            type Output = BitValue;
+            #[inline]
+            fn select<U: BitsPrimitive>(self) -> Self::Output {
+                let mut accessor = BitAccessor::new(
+                    self.components.ptr.cast::<U>(),
+                    self.components.metadata.offset,
+                );
+                let previous_value = accessor.get();
+                accessor.set(self.value);
+                previous_value
+            }
+        }
+
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
         debug_assert_eq!(components.metadata.bit_count, 1);
-
-        fn set<U: BitsPrimitive>(ptr: NonNull<()>, offset: usize, value: BitValue) -> BitValue {
-            let mut accessor = BitAccessor::new(ptr.cast::<U>(), offset);
-            let previous_value = accessor.get();
-            accessor.set(value);
-            previous_value
-        }
-
-        match components.metadata.underlying_primitive {
-            BitsPrimitiveDiscriminant::Usize => {
-                set::<usize>(components.ptr, components.metadata.offset, value)
-            }
-            BitsPrimitiveDiscriminant::U8 => {
-                set::<u8>(components.ptr, components.metadata.offset, value)
-            }
-            BitsPrimitiveDiscriminant::U16 => {
-                set::<u16>(components.ptr, components.metadata.offset, value)
-            }
-            BitsPrimitiveDiscriminant::U32 => {
-                set::<u32>(components.ptr, components.metadata.offset, value)
-            }
-            BitsPrimitiveDiscriminant::U64 => {
-                set::<u64>(components.ptr, components.metadata.offset, value)
-            }
-            BitsPrimitiveDiscriminant::U128 => {
-                set::<u128>(components.ptr, components.metadata.offset, value)
-            }
-        }
+        components
+            .metadata
+            .underlying_primitive
+            .select(Selector { value, components })
     }
 
     /// Allows retrieving and setting the bit value in a single operation.
@@ -104,41 +93,31 @@ impl Bit {
     /// TODO
     #[inline]
     pub fn modify<F: FnOnce(BitValue) -> BitValue>(&mut self, f: F) {
+        struct Selector<F: FnOnce(BitValue) -> BitValue> {
+            f: F,
+            components: UntypedRefComponents,
+        }
+        impl<F: FnOnce(BitValue) -> BitValue> BitsPrimitiveSelector for Selector<F> {
+            type Output = ();
+            #[inline]
+            fn select<U: BitsPrimitive>(self) -> Self::Output {
+                let mut accessor = BitAccessor::new(
+                    self.components.ptr.cast::<U>(),
+                    self.components.metadata.offset,
+                );
+                let previous_value = accessor.get();
+                let new_value = (self.f)(previous_value);
+                accessor.set(new_value);
+            }
+        }
+
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
         debug_assert_eq!(components.metadata.bit_count, 1);
-
-        fn modify<U: BitsPrimitive, F: FnOnce(BitValue) -> BitValue>(
-            ptr: NonNull<()>,
-            offset: usize,
-            f: F,
-        ) {
-            let mut accessor = BitAccessor::new(ptr.cast::<U>(), offset);
-            let previous_value = accessor.get();
-            let new_value = f(previous_value);
-            accessor.set(new_value);
-        }
-
-        match components.metadata.underlying_primitive {
-            BitsPrimitiveDiscriminant::Usize => {
-                modify::<usize, F>(components.ptr, components.metadata.offset, f)
-            }
-            BitsPrimitiveDiscriminant::U8 => {
-                modify::<u8, F>(components.ptr, components.metadata.offset, f)
-            }
-            BitsPrimitiveDiscriminant::U16 => {
-                modify::<u16, F>(components.ptr, components.metadata.offset, f)
-            }
-            BitsPrimitiveDiscriminant::U32 => {
-                modify::<u32, F>(components.ptr, components.metadata.offset, f)
-            }
-            BitsPrimitiveDiscriminant::U64 => {
-                modify::<u64, F>(components.ptr, components.metadata.offset, f)
-            }
-            BitsPrimitiveDiscriminant::U128 => {
-                modify::<u128, F>(components.ptr, components.metadata.offset, f)
-            }
-        }
+        components
+            .metadata
+            .underlying_primitive
+            .select(Selector { f, components });
     }
 }
 
