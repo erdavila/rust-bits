@@ -25,13 +25,35 @@ impl BitStr {
     /// ```
     #[inline]
     pub fn new_ref<U: BitsPrimitive>(under: &[U]) -> &Self {
+        let repr = Self::new_repr(under);
+        unsafe { std::mem::transmute(repr) }
+    }
+
+    /// Creates a mutable reference to the sequence of bits in the underlying memory.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rust_bits::BitStr;
+    ///
+    /// let mut array = [0b10010011u8, 0b01101100u8];
+    /// let bit_str: &BitStr = BitStr::new_mut(array.as_mut());
+    /// assert_eq!(bit_str.len(), 16);
+    /// ```
+    #[inline]
+    pub fn new_mut<U: BitsPrimitive>(under: &mut [U]) -> &mut Self {
+        let repr = Self::new_repr(under);
+        unsafe { std::mem::transmute(repr) }
+    }
+
+    #[inline]
+    fn new_repr<U: BitsPrimitive>(under: &[U]) -> RefRepr {
         let components = TypedRefComponents {
             ptr: NonNull::from(&under[0]),
             offset: 0,
             bit_count: under.len() * U::BIT_COUNT,
         };
-        let repr = components.encode();
-        unsafe { std::mem::transmute(repr) }
+        components.encode()
     }
 
     /// Returns the number of referenced bits.
@@ -55,19 +77,33 @@ impl BitStr {
         self.get_ref(index).map(|bit_ref| bit_ref.read())
     }
 
-    /// Returns the reference of a bit.
+    /// Returns a reference to a bit.
     ///
     /// `None` is returned if the index is out of bounds.
     #[inline]
     pub fn get_ref(&self, index: usize) -> Option<&Bit> {
+        self.get_bit_ref_repr(index)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    /// Returns a mutable reference to a bit.
+    ///
+    /// `None` is returned if the index is out of bounds.
+    #[inline]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Bit> {
+        self.get_bit_ref_repr(index)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    fn get_bit_ref_repr(&self, index: usize) -> Option<RefRepr> {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let mut components = repr.decode();
         if index < components.metadata.bit_count {
             components.metadata.offset += index;
             components.metadata.bit_count = 1;
             let repr = components.encode();
-            let bit_ref = unsafe { std::mem::transmute(repr) };
-            Some(bit_ref)
+            Some(repr)
         } else {
             None
         }
@@ -76,6 +112,8 @@ impl BitStr {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::identity;
+    use std::ops::Not;
     use std::ptr::NonNull;
 
     use crate::refrepr::RefRepr;
@@ -167,5 +205,35 @@ mod tests {
         assert_eq!(bit_str.get_ref(16), None);
         assert_eq!(bit_str.get_ref(17), None);
         assert_eq!(bit_str.get_ref(18), None);
+    }
+
+    #[test]
+    fn get_mut() {
+        let mut memory: [u8; 1] = [0b10010011];
+        let bit_str = BitStr::new_mut(&mut memory);
+
+        let bit_ref: Option<&mut Bit> = bit_str.get_mut(0);
+        assert_eq!(bit_ref.unwrap().read(), One);
+        assert_eq!(bit_str.get_mut(1).unwrap().read(), One);
+        assert_eq!(bit_str.get_mut(2).unwrap().read(), Zero);
+        assert_eq!(bit_str.get_mut(3).unwrap().read(), Zero);
+        assert_eq!(bit_str.get_mut(4).unwrap().read(), One);
+        assert_eq!(bit_str.get_mut(5).unwrap().read(), Zero);
+        assert_eq!(bit_str.get_mut(6).unwrap().read(), Zero);
+        assert_eq!(bit_str.get_mut(7).unwrap().read(), One);
+        assert_eq!(bit_str.get_mut(8), None);
+        assert_eq!(bit_str.get_mut(9), None);
+        assert_eq!(bit_str.get_mut(10), None);
+
+        assert_eq!(bit_str.get_mut(0).unwrap().write(Zero), One);
+        assert_eq!(bit_str.get_mut(1).unwrap().write(One), One);
+        assert_eq!(bit_str.get_mut(2).unwrap().write(Zero), Zero);
+        assert_eq!(bit_str.get_mut(3).unwrap().write(One), Zero);
+        bit_str.get_mut(4).unwrap().modify(Not::not);
+        bit_str.get_mut(5).unwrap().modify(Not::not);
+        bit_str.get_mut(6).unwrap().modify(identity);
+        bit_str.get_mut(7).unwrap().modify(identity);
+
+        assert_eq!(memory, [0b10101010]);
     }
 }
