@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::hash::{Hash, Hasher};
 use std::ptr::NonNull;
 
 use crate::bitvalue::BitValue;
@@ -128,58 +130,107 @@ impl<P: BitsPrimitive> BitAccessor<P> {
     }
 }
 
+impl PartialEq for Bit {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.read() == other.read()
+    }
+}
+
+impl PartialEq<BitValue> for Bit {
+    #[inline]
+    fn eq(&self, other: &BitValue) -> bool {
+        self.read() == *other
+    }
+}
+
+impl PartialEq<BitValue> for &Bit {
+    #[inline]
+    fn eq(&self, other: &BitValue) -> bool {
+        self.read() == *other
+    }
+}
+
+impl PartialEq<&Bit> for BitValue {
+    #[inline]
+    fn eq(&self, other: &&Bit) -> bool {
+        *self == other.read()
+    }
+}
+
+impl PartialEq<Bit> for BitValue {
+    #[inline]
+    fn eq(&self, other: &Bit) -> bool {
+        *self == other.read()
+    }
+}
+
+impl Hash for Bit {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.read().hash(state);
+    }
+}
+
+impl Debug for Bit {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.read(), f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::convert::identity;
+    use std::hash::{Hash, Hasher};
     use std::ops::Not;
     use std::ptr::NonNull;
 
-    use crate::refrepr::TypedRefComponents;
-    use crate::Bit;
+    use crate::refrepr::{RefRepr, TypedRefComponents};
     use crate::BitValue::{One, Zero};
+    use crate::{Bit, BitsPrimitive};
+
+    fn new_ref<U: BitsPrimitive>(under: &U, bit_index: usize) -> &Bit {
+        let repr = repr(under, bit_index);
+        unsafe { std::mem::transmute(repr) }
+    }
+
+    fn new_mut<U: BitsPrimitive>(under: &U, bit_index: usize) -> &mut Bit {
+        let repr = repr(under, bit_index);
+        unsafe { std::mem::transmute(repr) }
+    }
+
+    fn repr<U: BitsPrimitive>(under: &U, bit_index: usize) -> RefRepr {
+        let components = TypedRefComponents {
+            ptr: NonNull::from(under),
+            offset: bit_index,
+            bit_count: 1,
+        };
+        components.encode()
+    }
 
     #[test]
     fn read() {
         let under = 0b10010011u8;
 
-        let new_ref = |bit_index| -> &Bit {
-            let components = TypedRefComponents {
-                ptr: NonNull::from(&under),
-                offset: bit_index,
-                bit_count: 1,
-            };
-            let repr = components.encode();
-            unsafe { std::mem::transmute(repr) }
-        };
-
-        assert_eq!(new_ref(0).read(), One);
-        assert_eq!(new_ref(1).read(), One);
-        assert_eq!(new_ref(2).read(), Zero);
-        assert_eq!(new_ref(3).read(), Zero);
-        assert_eq!(new_ref(4).read(), One);
-        assert_eq!(new_ref(5).read(), Zero);
-        assert_eq!(new_ref(6).read(), Zero);
-        assert_eq!(new_ref(7).read(), One);
+        assert_eq!(new_ref(&under, 0).read(), One);
+        assert_eq!(new_ref(&under, 1).read(), One);
+        assert_eq!(new_ref(&under, 2).read(), Zero);
+        assert_eq!(new_ref(&under, 3).read(), Zero);
+        assert_eq!(new_ref(&under, 4).read(), One);
+        assert_eq!(new_ref(&under, 5).read(), Zero);
+        assert_eq!(new_ref(&under, 6).read(), Zero);
+        assert_eq!(new_ref(&under, 7).read(), One);
     }
 
     #[test]
     fn write() {
         let under = 0b10010011u8;
 
-        let new_mut = |bit_index| -> &mut Bit {
-            let components = TypedRefComponents {
-                ptr: NonNull::from(&under),
-                offset: bit_index,
-                bit_count: 1,
-            };
-            let repr = components.encode();
-            unsafe { std::mem::transmute(repr) }
-        };
-
-        assert_eq!(new_mut(0).write(Zero), One);
-        assert_eq!(new_mut(1).write(One), One);
-        assert_eq!(new_mut(2).write(Zero), Zero);
-        assert_eq!(new_mut(3).write(One), Zero);
+        assert_eq!(new_mut(&under, 0).write(Zero), One);
+        assert_eq!(new_mut(&under, 1).write(One), One);
+        assert_eq!(new_mut(&under, 2).write(Zero), Zero);
+        assert_eq!(new_mut(&under, 3).write(One), Zero);
         assert_eq!(under, 0b10011010);
     }
 
@@ -187,21 +238,52 @@ mod tests {
     fn modify() {
         let under = 0b10010011u8;
 
-        let new_mut = |bit_index| -> &mut Bit {
-            let components = TypedRefComponents {
-                ptr: NonNull::from(&under),
-                offset: bit_index,
-                bit_count: 1,
-            };
-            let repr = components.encode();
-            unsafe { std::mem::transmute(repr) }
-        };
-
-        new_mut(4).modify(Not::not);
-        new_mut(5).modify(Not::not);
-        new_mut(6).modify(identity);
-        new_mut(7).modify(identity);
+        new_mut(&under, 4).modify(Not::not);
+        new_mut(&under, 5).modify(Not::not);
+        new_mut(&under, 6).modify(identity);
+        new_mut(&under, 7).modify(identity);
 
         assert_eq!(under, 0b10100011);
+    }
+
+    #[test]
+    fn eq() {
+        let x = 0b1010u8;
+        let bit0 = new_ref(&x, 0);
+        let bit1 = new_ref(&x, 1);
+        let bit2 = new_ref(&x, 2);
+        let bit3 = new_ref(&x, 3);
+
+        assert!(bit0 == bit0);
+        assert!(bit0 == bit2);
+        assert!(bit0 == Zero);
+        assert!(bit0 == &Zero);
+        assert!(Zero == bit0);
+        assert!(&Zero == bit0);
+
+        assert!(bit0 != bit1);
+
+        assert!(bit1 == bit1);
+        assert!(bit1 == bit3);
+        assert!(bit1 == One);
+        assert!(bit1 == &One);
+        assert!(One == bit1);
+        assert!(&One == bit1);
+    }
+
+    #[test]
+    fn hash() {
+        fn hash_value<H: Hash>(h: H) -> u64 {
+            let mut s = std::collections::hash_map::DefaultHasher::new();
+            h.hash(&mut s);
+            s.finish()
+        }
+
+        let x = 0b10u8;
+        let bit0 = new_ref(&x, 0);
+        let bit1 = new_ref(&x, 1);
+
+        assert_eq!(hash_value(bit0), hash_value(Zero));
+        assert_eq!(hash_value(bit1), hash_value(One));
     }
 }
