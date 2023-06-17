@@ -1,3 +1,4 @@
+use std::ops::{Index, IndexMut};
 use std::ptr::NonNull;
 
 use crate::refrepr::{RefRepr, TypedRefComponents};
@@ -107,6 +108,22 @@ impl BitStr {
         } else {
             None
         }
+    }
+}
+
+impl Index<usize> for BitStr {
+    type Output = Bit;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get_ref(index).expect("invalid index")
+    }
+}
+
+impl IndexMut<usize> for BitStr {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_mut(index).expect("invalid index")
     }
 }
 
@@ -235,5 +252,21 @@ mod tests {
         bit_str.get_mut(7).unwrap().modify(identity);
 
         assert_eq!(memory, [0b10101010]);
+    }
+
+    #[test]
+    fn index() {
+        let mut memory: [u8; 1] = [0b10010011];
+        let bit_str = BitStr::new_mut(&mut memory);
+
+        let bit_ref: &Bit = &bit_str[3];
+        assert_eq!(bit_ref.read(), Zero);
+        assert_eq!(bit_str[4].read(), One);
+
+        let bit_mut: &mut Bit = &mut bit_str[3];
+        assert_eq!(bit_mut.write(One), Zero);
+        assert_eq!(bit_str[4].write(Zero), One);
+
+        assert_eq!(memory, [0b10001011]);
     }
 }
