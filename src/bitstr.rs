@@ -8,6 +8,7 @@ use crate::{Bit, BitValue, BitsPrimitive};
 ///
 /// [underlying memory]: UnderlyingMemory
 #[repr(C)]
+#[derive(Eq)]
 pub struct BitStr {
     _unsized: [()],
 }
@@ -124,6 +125,21 @@ impl IndexMut<usize> for BitStr {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index).expect("invalid index")
+    }
+}
+
+impl PartialEq for BitStr {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        // TODO: optimize it
+
+        for i in 0..self.len() {
+            if self.get(i) != other.get(i) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -268,5 +284,21 @@ mod tests {
         assert_eq!(bit_str[4].write(Zero), One);
 
         assert_eq!(memory, [0b10001011]);
+    }
+
+    #[test]
+    fn eq() {
+        let memory: [u8; 1] = [0b10010011];
+        let bit_str = BitStr::new_ref(&memory);
+
+        let memory_eq: [u8; 1] = [0b10010011];
+        let bit_str_eq = BitStr::new_ref(&memory_eq);
+
+        let memory_ne: [u8; 1] = [0b10000011];
+        let bit_str_ne = BitStr::new_ref(&memory_ne);
+
+        assert!(bit_str == bit_str);
+        assert!(bit_str == bit_str_eq);
+        assert!(bit_str != bit_str_ne);
     }
 }
