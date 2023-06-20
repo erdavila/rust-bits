@@ -88,7 +88,7 @@ fn accessing() {
     let bit: Option<&mut Bit> = bit_str.get_mut(index);
 
     let range: impl RangeBounds<usize>;
-    let slice: Option<&BitStr> = bit_str.get_range(range);
+    let slice: Option<&BitStr> = bit_str.get_range_ref(range);
     let slice: Option<&mut BitStr> = bit_str.get_range_mut(range);
 
     let index: usize;
@@ -162,6 +162,7 @@ fn adding_or_removing() {
 
     fn source() -> impl BitsSource;
     let removed: BitString = bit_string.splice(range, source());
+    let removed: Option<BitString> = bit_str.replace(range, source()); // source must have same number of bits
 
     bit_str.fill(bit);
 }

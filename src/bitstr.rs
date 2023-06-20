@@ -1,5 +1,8 @@
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
-use std::ops::{Index, IndexMut};
+use std::ops::{
+    Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
+    RangeToInclusive,
+};
 use std::ptr::NonNull;
 
 use crate::refrepr::{RefRepr, TypedRefComponents};
@@ -100,34 +103,84 @@ impl BitStr {
 
     #[inline]
     fn get_bit_ref_repr(&self, index: usize) -> Option<RefRepr> {
+        self.get_range_ref_repr(index..(index + 1))
+    }
+
+    /// Returns a subslice of this slice.
+    ///
+    /// `None` is returned if the range is out of bounds.
+    #[inline]
+    pub fn get_range_ref<R: RangeBounds<usize>>(&self, range: R) -> Option<&Self> {
+        self.get_range_ref_repr(range)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    /// Returns a mutable subslice of this slice.
+    ///
+    /// `None` is returned if the range is out of bounds.
+    #[inline]
+    pub fn get_range_mut<R: RangeBounds<usize>>(&mut self, range: R) -> Option<&mut Self> {
+        self.get_range_ref_repr(range)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    fn get_range_ref_repr<R: RangeBounds<usize>>(&self, range: R) -> Option<RefRepr> {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let mut components = repr.decode();
-        if index < components.metadata.bit_count {
-            components.metadata.offset += index;
-            components.metadata.bit_count = 1;
-            let repr = components.encode();
-            Some(repr)
-        } else {
-            None
+
+        let start = match range.start_bound() {
+            Bound::Included(start) => *start,
+            Bound::Excluded(start) => *start + 1,
+            Bound::Unbounded => 0,
+        };
+
+        let end = match range.end_bound() {
+            Bound::Included(end) => *end + 1,
+            Bound::Excluded(end) => *end,
+            Bound::Unbounded => components.metadata.bit_count,
+        };
+
+        (start <= end && end <= components.metadata.bit_count).then(|| {
+            components.metadata.offset += start;
+            components.metadata.bit_count = end - start;
+            components.encode()
+        })
+    }
+}
+
+macro_rules! impl_index {
+    ($type:ty, $output:ty, $method_ref:ident, $method_mut:ident, $error:literal) => {
+        impl Index<$type> for BitStr {
+            type Output = $output;
+            #[inline]
+            fn index(&self, index: $type) -> &Self::Output {
+                self.$method_ref(index).expect($error)
+            }
         }
-    }
+
+        impl IndexMut<$type> for BitStr {
+            #[inline]
+            fn index_mut(&mut self, index: $type) -> &mut Self::Output {
+                self.$method_mut(index).expect($error)
+            }
+        }
+    };
 }
 
-impl Index<usize> for BitStr {
-    type Output = Bit;
-
-    #[inline]
-    fn index(&self, index: usize) -> &Self::Output {
-        self.get_ref(index).expect("invalid index")
-    }
+macro_rules! impl_range_index {
+    ($type:ty) => {
+        impl_index!($type, BitStr, get_range_ref, get_range_mut, "invalid range");
+    };
 }
 
-impl IndexMut<usize> for BitStr {
-    #[inline]
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        self.get_mut(index).expect("invalid index")
-    }
-}
+impl_index!(usize, Bit, get_ref, get_mut, "invalid index");
+impl_range_index!(Range<usize>); // x..y
+impl_range_index!(RangeInclusive<usize>); // x..=y
+impl_range_index!(RangeToInclusive<usize>); // ..=y
+impl_range_index!(RangeTo<usize>); // ..y
+impl_range_index!(RangeFrom<usize>); // x..
+impl_range_index!(RangeFull); // ..
 
 impl PartialEq for BitStr {
     #[inline]
@@ -314,8 +367,59 @@ mod tests {
     }
 
     #[test]
+    fn get_range_ref() {
+        let memory: [u16; 2] = [0b01011111_11101001, 0b10010111_11111010]; // In memory: 10010111_11111010__01011111_11101001
+        let bit_str = BitStr::new_ref(memory.as_ref());
+
+        let range1: Option<&BitStr> = bit_str.get_range_ref(0..4);
+        let range2: Option<&BitStr> = bit_str.get_range_ref(14..18);
+        let range3: Option<&BitStr> = bit_str.get_range_ref(28..32);
+        let range_x: Option<&BitStr> = bit_str.get_range_ref(6..10);
+
+        assert!(range1.is_some());
+        assert!(range2.is_some());
+        assert!(range3.is_some());
+        assert!(range_x.is_some());
+        assert_eq!(range1.unwrap().to_string(), "1001");
+        assert_eq!(range2.unwrap().to_string(), "1001");
+        assert_eq!(range3.unwrap().to_string(), "1001");
+        assert_eq!(range_x.unwrap().to_string(), "1111");
+        assert_eq!(range1, range1);
+        assert_eq!(range1, range2);
+        assert_eq!(range1, range3);
+        assert_ne!(range1, range_x);
+        assert!(bit_str.get_range_ref(28..33).is_none());
+    }
+
+    #[test]
+    fn get_range_mut() {
+        let mut memory: [u8; 1] = [0b10010011];
+        let bit_str = BitStr::new_mut(&mut memory);
+
+        let range: Option<&mut BitStr> = bit_str.get_range_mut(2..6);
+
+        let range = range.unwrap();
+        assert_eq!(range[0].write(One), Zero);
+        assert_eq!(range[3].write(One), Zero);
+        assert_eq!(memory, [0b10110111]);
+    }
+
+    #[test]
+    fn get_range_forms() {
+        let memory: [u8; 1] = [0b10010011];
+        let bit_str = BitStr::new_ref(&memory);
+
+        assert!(bit_str.get_range_ref(2..=5) == bit_str.get_range_ref(2..6));
+        assert!(bit_str.get_range_ref(..=3) == bit_str.get_range_ref(0..4));
+        assert!(bit_str.get_range_ref(..4) == bit_str.get_range_ref(0..4));
+        assert!(bit_str.get_range_ref(4..) == bit_str.get_range_ref(4..8));
+        assert!(bit_str.get_range_ref(..) == Some(bit_str));
+    }
+
+    #[test]
     fn index() {
         let mut memory: [u8; 1] = [0b10010011];
+
         let bit_str = BitStr::new_mut(&mut memory);
 
         let bit_ref: &Bit = &bit_str[3];
@@ -325,8 +429,12 @@ mod tests {
         let bit_mut: &mut Bit = &mut bit_str[3];
         assert_eq!(bit_mut.write(One), Zero);
         assert_eq!(bit_str[4].write(Zero), One);
-
         assert_eq!(memory, [0b10001011]);
+
+        let bit_str = BitStr::new_ref(&memory);
+        let bit_substr: &BitStr = &bit_str[2..6];
+        assert_eq!(bit_substr.len(), 4);
+        assert_eq!(bit_substr, bit_str.get_range_ref(2..6).unwrap());
     }
 
     #[test]
