@@ -1,6 +1,8 @@
 use std::ptr::NonNull;
 
-use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
+use crate::utils::{
+    max_value_for_bit_count, normalize_ptr_and_offset, values_count_to_bit_count, BitPattern,
+};
 use crate::{BitsPrimitive, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 
 const DISCRIMINANT_BIT_COUNT: usize = 3;
@@ -64,12 +66,8 @@ impl RefRepr {
             type Output = (NonNull<()>, usize);
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let index = self.offset / U::BIT_COUNT;
-                let offset = self.offset % U::BIT_COUNT;
-
-                let ptr = self.ptr.cast::<U>().as_ptr();
-                let ptr = unsafe { NonNull::new_unchecked(ptr.add(index)) };
-
+                let ptr = self.ptr.cast::<U>();
+                let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, self.offset) };
                 (ptr.cast(), offset)
             }
         }
@@ -225,7 +223,9 @@ impl MetadataBits {
 
     #[inline]
     fn pop(&mut self, bit_count: usize) -> usize {
-        let mask = BitPattern::new_with_zeros().and_ones(bit_count).get();
+        let mask = BitPattern::<usize>::new_with_zeros()
+            .and_ones(bit_count)
+            .get();
         let popped = self.0 & mask;
         self.0 >>= bit_count;
         popped
@@ -389,10 +389,10 @@ mod tests {
                 let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
                 let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
 
-                assert_metadata_encoding!($type, BitPattern::new_with_zeros().get(), 0, 0);
+                assert_metadata_encoding!($type, BitPattern::<usize>::new_with_zeros().get(), 0, 0);
                 assert_metadata_encoding!(
                     $type,
-                    BitPattern::new_with_ones().get(),
+                    BitPattern::<usize>::new_with_ones().get(),
                     max_offset,
                     max_bit_count
                 );

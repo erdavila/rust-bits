@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr};
+use std::fmt::{Binary, Debug, LowerHex, UpperHex};
+use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr, ShrAssign};
 
 /// Represents a basic element whose bits can be manipulated and referenced.
 ///
@@ -8,18 +8,22 @@ use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr};
 /// It has implementations for all numeric unsigned types.
 pub trait BitsPrimitive
 where
-    Self: Sized + Copy + Eq + Debug,
+    Self: Sized + Copy + Eq + Default + Binary + LowerHex + UpperHex + Debug,
     Self: BitAnd<Output = Self>,
     Self: BitAndAssign,
     Self: BitOrAssign,
     Self: Not<Output = Self>,
     Self: Shl<usize, Output = Self>,
     Self: Shr<usize, Output = Self>,
+    Self: ShrAssign<usize>,
 {
     const DISCRIMINANT: BitsPrimitiveDiscriminant;
     const BIT_COUNT: usize;
     const ZERO: Self;
     const ONE: Self;
+
+    fn from_usize(value: usize) -> Self;
+    fn to_usize(self) -> usize;
 }
 
 macro_rules! impl_primitive {
@@ -30,6 +34,14 @@ macro_rules! impl_primitive {
             const BIT_COUNT: usize = <$type>::BITS as usize;
             const ZERO: Self = 0;
             const ONE: Self = 1;
+
+            fn from_usize(value: usize) -> Self {
+                value as Self
+            }
+
+            fn to_usize(self) -> usize {
+                self as usize
+            }
         }
     };
 }

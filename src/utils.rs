@@ -1,3 +1,7 @@
+use std::ptr::NonNull;
+
+use crate::BitsPrimitive;
+
 // The number of bits required to represent a number of values.
 //
 // It is expected that `values_count` is a power of 2.
@@ -17,12 +21,41 @@ pub(crate) fn max_value_for_bit_count(bit_count: usize) -> usize {
     bit_count_to_values_count(bit_count) - 1
 }
 
-pub(crate) struct BitPattern(usize);
+#[inline]
+pub(crate) unsafe fn normalize_const_ptr_and_offset<P: BitsPrimitive>(
+    ptr: *const P,
+    offset: usize,
+) -> (*const P, usize) {
+    let index = offset / P::BIT_COUNT;
+    let offset = offset % P::BIT_COUNT;
+    let ptr = ptr.add(index);
+    (ptr, offset)
+}
 
-impl BitPattern {
+#[inline]
+pub(crate) unsafe fn normalize_mut_ptr_and_offset<P: BitsPrimitive>(
+    ptr: *mut P,
+    offset: usize,
+) -> (*mut P, usize) {
+    let (ptr, offset) = normalize_const_ptr_and_offset(ptr as _, offset);
+    (ptr as _, offset)
+}
+
+#[inline]
+pub(crate) unsafe fn normalize_ptr_and_offset<P: BitsPrimitive>(
+    ptr: NonNull<P>,
+    offset: usize,
+) -> (NonNull<P>, usize) {
+    let (ptr, offset) = normalize_mut_ptr_and_offset(ptr.as_ptr(), offset);
+    (NonNull::new_unchecked(ptr), offset)
+}
+
+pub(crate) struct BitPattern<P: BitsPrimitive>(P);
+
+impl<P: BitsPrimitive> BitPattern<P> {
     #[inline]
     pub(crate) fn new_with_zeros() -> Self {
-        BitPattern(0)
+        BitPattern(P::ZERO)
     }
 
     #[inline]
@@ -46,7 +79,7 @@ impl BitPattern {
     }
 
     #[inline]
-    pub(crate) fn get(self) -> usize {
+    pub(crate) fn get(self) -> P {
         self.0
     }
 }
@@ -75,14 +108,20 @@ mod tests {
 
     #[test]
     fn bit_pattern() {
-        assert_eq!(BitPattern::new_with_zeros().get(), 0b0000);
-        assert_eq!(BitPattern::new_with_zeros().and_ones(1).get(), 0b00001);
+        assert_eq!(BitPattern::<usize>::new_with_zeros().get(), 0b0000);
         assert_eq!(
-            BitPattern::new_with_zeros().and_ones(1).and_zeros(2).get(),
+            BitPattern::<usize>::new_with_zeros().and_ones(1).get(),
+            0b00001
+        );
+        assert_eq!(
+            BitPattern::<usize>::new_with_zeros()
+                .and_ones(1)
+                .and_zeros(2)
+                .get(),
             0b0000100
         );
         assert_eq!(
-            BitPattern::new_with_zeros()
+            BitPattern::<usize>::new_with_zeros()
                 .and_ones(1)
                 .and_zeros(2)
                 .and_ones(3)
@@ -90,14 +129,20 @@ mod tests {
             0b0000100111
         );
 
-        assert_eq!(BitPattern::new_with_ones().get(), !0b0000);
-        assert_eq!(BitPattern::new_with_ones().and_zeros(1).get(), !0b00001);
+        assert_eq!(BitPattern::<usize>::new_with_ones().get(), !0b0000);
         assert_eq!(
-            BitPattern::new_with_ones().and_zeros(1).and_ones(2).get(),
+            BitPattern::<usize>::new_with_ones().and_zeros(1).get(),
+            !0b00001
+        );
+        assert_eq!(
+            BitPattern::<usize>::new_with_ones()
+                .and_zeros(1)
+                .and_ones(2)
+                .get(),
             !0b0000100
         );
         assert_eq!(
-            BitPattern::new_with_ones()
+            BitPattern::<usize>::new_with_ones()
                 .and_zeros(1)
                 .and_ones(2)
                 .and_zeros(3)
@@ -106,7 +151,7 @@ mod tests {
         );
 
         assert_eq!(
-            BitPattern::new_with_zeros()
+            BitPattern::<usize>::new_with_zeros()
                 .and_ones(1)
                 .and_zeros(2)
                 .invert()
@@ -114,7 +159,7 @@ mod tests {
             !0b0000100
         );
         assert_eq!(
-            BitPattern::new_with_ones()
+            BitPattern::<usize>::new_with_ones()
                 .and_zeros(1)
                 .and_ones(2)
                 .invert()

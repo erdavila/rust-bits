@@ -20,6 +20,7 @@ mod bitsprimitive;
 mod bitstr;
 mod bitstring;
 mod bitvalue;
+pub mod copy_bits;
 mod refrepr;
 mod utils;
 
