@@ -1,3 +1,4 @@
+use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::ops::{Index, IndexMut};
 use std::ptr::NonNull;
 
@@ -140,6 +141,48 @@ impl PartialEq for BitStr {
         }
 
         true
+    }
+}
+
+impl Display for BitStr {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Binary::fmt(self, f)
+    }
+}
+
+impl Binary for BitStr {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO: optimize it
+
+        let mut bits = String::with_capacity(self.len());
+        for i in (0..self.len()).rev() {
+            bits.push(if self[i].read().to_bool() { '1' } else { '0' });
+        }
+
+        write!(f, "{}{bits}", if f.alternate() { "0b" } else { "" })
+    }
+}
+
+impl LowerHex for BitStr {
+    #[inline]
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+impl UpperHex for BitStr {
+    #[inline]
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+impl Debug for BitStr {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\"{self}\"")
     }
 }
 
@@ -300,5 +343,20 @@ mod tests {
         assert!(bit_str == bit_str);
         assert!(bit_str == bit_str_eq);
         assert!(bit_str != bit_str_ne);
+    }
+
+    #[test]
+    fn formatting() {
+        let memory: [u8; 2] = [0b00101011, 0b00001111];
+        let bit_str = BitStr::new_ref(memory.as_ref());
+
+        assert_eq!(format!("{bit_str}"), "0000111100101011");
+        assert_eq!(format!("{bit_str:b}"), "0000111100101011");
+        assert_eq!(format!("{bit_str:#b}"), "0b0000111100101011");
+        // assert_eq!(format!("{bit_str:x}"), "0f2b");
+        // assert_eq!(format!("{bit_str:#x}"), "0x0f2b");
+        // assert_eq!(format!("{bit_str:X}"), "0F2B");
+        // assert_eq!(format!("{bit_str:#X}"), "0x0F2B");
+        assert_eq!(format!("{bit_str:?}"), "\"0000111100101011\"");
     }
 }
