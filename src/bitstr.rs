@@ -197,6 +197,28 @@ impl PartialEq for BitStr {
     }
 }
 
+impl<const N: usize> PartialEq<[BitValue; N]> for BitStr {
+    #[inline]
+    fn eq(&self, other: &[BitValue; N]) -> bool {
+        PartialEq::<[BitValue]>::eq(self, other)
+    }
+}
+
+impl PartialEq<[BitValue]> for BitStr {
+    #[inline]
+    fn eq(&self, other: &[BitValue]) -> bool {
+        // TODO: optimize it
+
+        for i in 0..self.len() {
+            if self.get(i) != other.get(i).copied() {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
 impl Display for BitStr {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -451,6 +473,18 @@ mod tests {
         assert!(bit_str == bit_str);
         assert!(bit_str == bit_str_eq);
         assert!(bit_str != bit_str_ne);
+    }
+
+    #[test]
+    fn eq_bit_values() {
+        let memory: [u8; 1] = [0b10010011];
+        let bit_str = BitStr::new_ref(&memory);
+        let bit_substr = &bit_str[2..6];
+
+        assert!(bit_str == &[One, One, Zero, Zero, One, Zero, Zero, One]);
+        assert!(bit_substr == &[Zero, Zero, One, Zero]);
+        assert!(bit_str == [One, One, Zero, Zero, One, Zero, Zero, One].as_ref());
+        assert!(bit_substr == [Zero, Zero, One, Zero].as_ref());
     }
 
     #[test]
