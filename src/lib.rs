@@ -21,6 +21,7 @@ mod bitstr;
 mod bitstring;
 mod bitvalue;
 pub mod copy_bits;
+mod primitive;
 mod refrepr;
 mod utils;
 
@@ -30,3 +31,4 @@ pub use bitsprimitive::*;
 pub use bitstr::*;
 pub use bitstring::*;
 pub use bitvalue::*;
+pub use primitive::*;
