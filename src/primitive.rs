@@ -48,6 +48,29 @@ impl<P: BitsPrimitive> Primitive<P> {
     }
 
     #[inline]
+    pub fn modify<F: FnOnce(P) -> P>(&mut self, f: F) {
+        struct Selector<P, F> {
+            f: F,
+            phantom: PhantomData<P>,
+        }
+        impl<P: BitsPrimitive, F: FnOnce(P) -> P> RefComponentsSelector for Selector<P, F> {
+            type Output = ();
+            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
+                let mut accessor =
+                    PrimitiveAccessor::<P, _>::new(components.ptr, components.offset);
+                let previous_value = accessor.get();
+                let new_value = (self.f)(previous_value);
+                accessor.set(new_value);
+            }
+        }
+
+        self.components().select(Selector::<P, F> {
+            f,
+            phantom: PhantomData,
+        });
+    }
+
+    #[inline]
     fn components(&self) -> UntypedRefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
@@ -91,6 +114,7 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Not;
     use std::ptr::NonNull;
 
     use crate::refrepr::TypedRefComponents;
@@ -129,5 +153,22 @@ mod tests {
 
         assert_eq!(previous_value, 0xED);
         assert_eq!(memory, [0x6CBA, 0x10F7]); // In memory: 10F76CBA
+    }
+
+    #[test]
+    fn modify() {
+        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory: 10FEDCBA
+        let ptr = NonNull::from(&mut memory[0]);
+        let components = TypedRefComponents {
+            ptr,
+            offset: 12,
+            bit_count: u8::BIT_COUNT,
+        };
+        let repr = components.encode();
+        let p_ref: &mut Primitive<u8> = unsafe { std::mem::transmute(repr) };
+
+        p_ref.modify(Not::not);
+
+        assert_eq!(memory, [0x2CBA, 0x10F1]); // In memory: 10F12CBA
     }
 }
