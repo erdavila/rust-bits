@@ -6,7 +6,7 @@ use std::ops::{
 use std::ptr::NonNull;
 
 use crate::refrepr::{RefRepr, TypedRefComponents};
-use crate::{Bit, BitValue, BitsPrimitive};
+use crate::{Bit, BitValue, BitsPrimitive, Primitive};
 
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
 ///
@@ -80,6 +80,7 @@ impl BitStr {
     /// `None` is returned if the index is out of bounds.
     #[inline]
     pub fn get(&self, index: usize) -> Option<BitValue> {
+        // TODO: review implementation. Calling read() requires decoding the just encoded reference.
         self.get_ref(index).map(|bit_ref| bit_ref.read())
     }
 
@@ -122,6 +123,36 @@ impl BitStr {
     pub fn get_range_mut<R: RangeBounds<usize>>(&mut self, range: R) -> Option<&mut Self> {
         self.get_range_ref_repr(range)
             .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    pub fn get_primitive<P: BitsPrimitive>(&self, first_bit_index: usize) -> Option<P> {
+        // TODO: review implementation. Calling read() requires decoding the just encoded reference.
+        self.get_primitive_ref(first_bit_index)
+            .map(|p_ref| p_ref.read())
+    }
+
+    #[inline]
+    pub fn get_primitive_ref<P: BitsPrimitive>(
+        &self,
+        first_bit_index: usize,
+    ) -> Option<&Primitive<P>> {
+        self.get_primitive_ref_repr::<P>(first_bit_index)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    pub fn get_primitive_mut<P: BitsPrimitive>(
+        &mut self,
+        first_bit_index: usize,
+    ) -> Option<&mut Primitive<P>> {
+        self.get_primitive_ref_repr::<P>(first_bit_index)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    fn get_primitive_ref_repr<P: BitsPrimitive>(&self, first_bit_index: usize) -> Option<RefRepr> {
+        self.get_range_ref_repr(first_bit_index..(first_bit_index + P::BIT_COUNT))
     }
 
     #[inline]
@@ -269,7 +300,7 @@ mod tests {
 
     use crate::refrepr::RefRepr;
     use crate::BitValue::{One, Zero};
-    use crate::{Bit, BitStr, BitsPrimitive};
+    use crate::{Bit, BitStr, BitsPrimitive, Primitive};
 
     #[test]
     fn new_ref() {
@@ -436,6 +467,30 @@ mod tests {
         assert!(bit_str.get_range_ref(..4) == bit_str.get_range_ref(0..4));
         assert!(bit_str.get_range_ref(4..) == bit_str.get_range_ref(4..8));
         assert!(bit_str.get_range_ref(..) == Some(bit_str));
+    }
+
+    #[test]
+    fn get_primitive() {
+        let mut memory: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: FEDCBA
+        let bit_str = BitStr::new_mut(&mut memory);
+
+        let value: Option<u16> = bit_str.get_primitive(4);
+        assert_eq!(value.unwrap(), 0xEDCB);
+
+        let u16_ref: Option<&Primitive<u16>> = bit_str.get_primitive_ref(4);
+        assert_eq!(u16_ref.unwrap().read(), 0xEDCB);
+
+        let u16_mut: Option<&mut Primitive<u16>> = bit_str.get_primitive_mut(4);
+        assert_eq!(u16_mut.unwrap().write(0x1234), 0xEDCB);
+        assert_eq!(memory, [0x4A, 0x23, 0xF1]); // In memory: F1234A
+
+        // Test index limits
+        let bit_str = BitStr::new_ref(&memory);
+        assert!(bit_str.get_primitive::<u8>(16).is_some());
+        assert!(bit_str.get_primitive::<u8>(17).is_none());
+        assert!(bit_str.get_primitive::<u16>(8).is_some());
+        assert!(bit_str.get_primitive::<u16>(9).is_none());
+        assert!(bit_str.get_primitive::<u32>(0).is_none());
     }
 
     #[test]
