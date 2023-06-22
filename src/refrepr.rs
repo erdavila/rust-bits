@@ -22,57 +22,29 @@ pub(crate) struct RefRepr {
 }
 
 impl RefRepr {
-    #[inline]
-    fn encode(components: UntypedRefComponents) -> Self {
-        let metadata = components.metadata;
-        let (ptr, offset) = Self::normalize(
-            components.ptr,
-            metadata.offset,
-            metadata.underlying_primitive,
-        );
-
-        let bit_counts = ComponentsBitCounts::from(metadata.underlying_primitive);
-
-        let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
-        assert!(
-            metadata.bit_count <= max_bit_count,
-            "bit_count too large for underlying type"
-        );
-
-        let mut bits = MetadataBits::from(metadata.bit_count);
-        bits.push(offset, bit_counts.offset_bit_count);
-        bits.push(
-            encode_discriminant(metadata.underlying_primitive),
-            DISCRIMINANT_BIT_COUNT,
-        );
-
-        RefRepr {
-            ptr,
-            metadata: EncodedMetadata(bits.0),
-        }
-    }
-
-    #[inline]
-    fn normalize(
-        ptr: NonNull<()>,
-        offset: usize,
-        underlying_primitive: BitsPrimitiveDiscriminant,
-    ) -> (NonNull<()>, usize) {
-        struct Selector {
+    fn encode<U: BitsPrimitive>(components: TypedRefComponents<U>) -> Self {
+        fn untyped_encode(
             ptr: NonNull<()>,
-            offset: usize,
-        }
-        impl BitsPrimitiveSelector for Selector {
-            type Output = (NonNull<()>, usize);
-            #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let ptr = self.ptr.cast::<U>();
-                let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, self.offset) };
-                (ptr.cast(), offset)
-            }
+            metadata: Metadata,
+            bit_counts: ComponentsBitCounts,
+        ) -> RefRepr {
+            let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
+            assert!(
+                metadata.bit_count <= max_bit_count,
+                "bit_count too large for underlying type"
+            );
+
+            let metadata = metadata.encode(bit_counts.offset_bit_count);
+            RefRepr { ptr, metadata }
         }
 
-        underlying_primitive.select(Selector { ptr, offset })
+        let metadata = Metadata {
+            underlying_primitive: U::DISCRIMINANT,
+            offset: components.offset,
+            bit_count: components.bit_count,
+        };
+        let bit_counts = ComponentsBitCounts::new::<U>();
+        untyped_encode(components.ptr.cast(), metadata, bit_counts)
     }
 
     #[inline]
@@ -114,6 +86,18 @@ pub(crate) struct Metadata {
     pub(crate) bit_count: usize,
 }
 
+impl Metadata {
+    fn encode(self, offset_bit_count: usize) -> EncodedMetadata {
+        let mut metadata_bits = MetadataBits::from(self.bit_count);
+        metadata_bits.push(self.offset, offset_bit_count);
+        metadata_bits.push(
+            encode_discriminant(self.underlying_primitive),
+            DISCRIMINANT_BIT_COUNT,
+        );
+        EncodedMetadata(metadata_bits.0)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UntypedRefComponents {
     pub(crate) ptr: NonNull<()>,
@@ -121,11 +105,6 @@ pub(crate) struct UntypedRefComponents {
 }
 
 impl UntypedRefComponents {
-    #[inline]
-    pub(crate) fn encode(self) -> RefRepr {
-        RefRepr::encode(self)
-    }
-
     #[inline]
     pub(crate) fn select<S: RefComponentsSelector>(self, selector: S) -> S::Output {
         struct PSelector<S: RefComponentsSelector> {
@@ -160,6 +139,7 @@ pub(crate) trait RefComponentsSelector {
     fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output;
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
     pub(crate) ptr: NonNull<P>,
     pub(crate) offset: usize,
@@ -168,20 +148,18 @@ pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
 
 impl<P: BitsPrimitive> TypedRefComponents<P> {
     #[inline]
-    pub(crate) fn to_untyped(&self) -> UntypedRefComponents {
-        UntypedRefComponents {
-            ptr: self.ptr.cast(),
-            metadata: Metadata {
-                underlying_primitive: P::DISCRIMINANT,
-                offset: self.offset,
-                bit_count: self.bit_count,
-            },
+    pub(crate) fn new_normalized(ptr: NonNull<P>, offset: usize, bit_count: usize) -> Self {
+        let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, offset) };
+        TypedRefComponents {
+            ptr,
+            offset,
+            bit_count,
         }
     }
 
     #[inline]
     pub(crate) fn encode(self) -> RefRepr {
-        self.to_untyped().encode()
+        RefRepr::encode(self)
     }
 }
 
@@ -191,7 +169,26 @@ struct ComponentsBitCounts {
     bit_count_bit_count: usize,
 }
 
+impl ComponentsBitCounts {
+    #[inline]
+    fn new<U: BitsPrimitive>() -> Self {
+        Self::new_with_primitive_bit_count(U::BIT_COUNT)
+    }
+
+    #[inline]
+    fn new_with_primitive_bit_count(primitive_bit_count: usize) -> Self {
+        let offset_bit_count = values_count_to_bit_count(primitive_bit_count);
+        let bit_count_bit_count = usize::BIT_COUNT - DISCRIMINANT_BIT_COUNT - offset_bit_count;
+
+        ComponentsBitCounts {
+            offset_bit_count,
+            bit_count_bit_count,
+        }
+    }
+}
+
 impl From<BitsPrimitiveDiscriminant> for ComponentsBitCounts {
+    #[inline]
     fn from(discr: BitsPrimitiveDiscriminant) -> Self {
         struct Selector;
         impl BitsPrimitiveSelector for Selector {
@@ -201,15 +198,9 @@ impl From<BitsPrimitiveDiscriminant> for ComponentsBitCounts {
                 U::BIT_COUNT
             }
         }
+
         let primitive_bit_count = discr.select(Selector);
-
-        let offset_bit_count = values_count_to_bit_count(primitive_bit_count);
-        let bit_count_bit_count = usize::BIT_COUNT - DISCRIMINANT_BIT_COUNT - offset_bit_count;
-
-        ComponentsBitCounts {
-            offset_bit_count,
-            bit_count_bit_count,
-        }
+        Self::new_with_primitive_bit_count(primitive_bit_count)
     }
 }
 
@@ -258,11 +249,13 @@ mod tests {
     use std::collections::HashSet;
     use std::ptr::NonNull;
 
-    use crate::refrepr::{encode_discriminant, EncodedMetadata, Metadata, DISCRIMINANT_BIT_COUNT};
+    use crate::refrepr::{
+        encode_discriminant, EncodedMetadata, TypedRefComponents, DISCRIMINANT_BIT_COUNT,
+    };
     use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
     use crate::BitsPrimitive;
 
-    use super::{ComponentsBitCounts, UntypedRefComponents, ALL_DISCRIMINANTS};
+    use super::{ComponentsBitCounts, ALL_DISCRIMINANTS};
 
     #[test]
     fn discriminant_encoding() {
@@ -326,44 +319,47 @@ mod tests {
 
     #[test]
     fn encode_and_decode() {
-        macro_rules! assert_convertions {
+        macro_rules! assert_conversions {
             ($type:ty, $under:ident, $offset:expr, $bit_count:expr) => {
-                let original_components = UntypedRefComponents {
-                    ptr: NonNull::from($under).cast(),
-                    metadata: Metadata {
-                        underlying_primitive: <$type>::DISCRIMINANT,
-                        offset: $offset,
-                        bit_count: $bit_count,
-                    },
+                let original_components = TypedRefComponents {
+                    ptr: NonNull::from(&$under[0]),
+                    offset: $offset,
+                    bit_count: $bit_count,
                 };
 
                 let repr = original_components.encode();
                 let components = repr.decode();
 
-                assert_eq!(components, original_components);
+                assert_eq!(components.ptr, original_components.ptr.cast());
+                assert_eq!(
+                    components.metadata.underlying_primitive,
+                    <$type>::DISCRIMINANT
+                );
+                assert_eq!(components.metadata.offset, original_components.offset);
+                assert_eq!(components.metadata.bit_count, original_components.bit_count);
             };
         }
 
-        macro_rules! assert_convertions_for_type {
+        macro_rules! assert_conversions_for_type {
             ($type:ty) => {
-                let under: &[u8] = fake_slice_large_enough_for_max_values();
+                let under: &[$type] = fake_slice_large_enough_for_max_values();
                 let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
                 let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
                 let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
 
-                assert_convertions!($type, under, 0, 0);
-                assert_convertions!($type, under, 0, max_bit_count);
-                assert_convertions!($type, under, max_offset, 0);
-                assert_convertions!($type, under, max_offset, max_bit_count);
+                assert_conversions!($type, under, 0, 0);
+                assert_conversions!($type, under, 0, max_bit_count);
+                assert_conversions!($type, under, max_offset, 0);
+                assert_conversions!($type, under, max_offset, max_bit_count);
             };
         }
 
-        assert_convertions_for_type!(usize);
-        assert_convertions_for_type!(u8);
-        assert_convertions_for_type!(u16);
-        assert_convertions_for_type!(u32);
-        assert_convertions_for_type!(u64);
-        assert_convertions_for_type!(u128);
+        assert_conversions_for_type!(usize);
+        assert_conversions_for_type!(u8);
+        assert_conversions_for_type!(u16);
+        assert_conversions_for_type!(u32);
+        assert_conversions_for_type!(u64);
+        assert_conversions_for_type!(u128);
     }
 
     #[test]
@@ -415,13 +411,11 @@ mod tests {
                 let under: $type = <$type>::ZERO;
                 let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
                 let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
-                let components = UntypedRefComponents {
-                    ptr: NonNull::from(&under).cast(),
-                    metadata: Metadata {
-                        underlying_primitive: <$type>::DISCRIMINANT,
-                        offset: 0,
-                        bit_count: max_bit_count + 1,
-                    },
+
+                let components = TypedRefComponents {
+                    ptr: NonNull::from(&under),
+                    offset: 0,
+                    bit_count: max_bit_count + 1,
                 };
 
                 components.encode();
@@ -443,23 +437,14 @@ mod tests {
                 let mut memory = [<$type>::ZERO, <$type>::ZERO, <$type>::ZERO];
                 let under = &mut memory;
                 let ptr = NonNull::from(&under[0]);
-                let components = UntypedRefComponents {
-                    ptr: ptr.cast(),
-                    metadata: Metadata {
-                        underlying_primitive: <$type>::DISCRIMINANT,
-                        offset: $offset,
-                        bit_count: 1,
-                    },
-                };
 
-                let repr = components.encode();
-                let decoded = repr.decode();
+                let components = TypedRefComponents::new_normalized(ptr, $offset, 1);
 
                 assert_eq!(
-                    decoded.ptr.as_ptr(),
+                    components.ptr.as_ptr(),
                     unsafe { ptr.as_ptr().add($expected_index) }.cast()
                 );
-                assert_eq!(decoded.metadata.offset, $expected_offset);
+                assert_eq!(components.offset, $expected_offset);
             };
         }
 

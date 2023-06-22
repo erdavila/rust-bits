@@ -100,14 +100,14 @@ impl Bit {
     }
 }
 
-struct BitAccessor<P: BitsPrimitive> {
+pub(crate) struct BitAccessor<P: BitsPrimitive> {
     ptr: NonNull<P>,
     mask: P,
 }
 
 impl<P: BitsPrimitive> BitAccessor<P> {
     #[inline]
-    fn new(ptr: NonNull<P>, bit_index: usize) -> Self {
+    pub(crate) fn new(ptr: NonNull<P>, bit_index: usize) -> Self {
         BitAccessor {
             ptr,
             mask: P::ONE << bit_index,
@@ -115,7 +115,7 @@ impl<P: BitsPrimitive> BitAccessor<P> {
     }
 
     #[inline]
-    fn get(&self) -> BitValue {
+    pub(crate) fn get(&self) -> BitValue {
         BitValue::from((unsafe { *self.ptr.as_ref() } & self.mask) != P::ZERO)
     }
 

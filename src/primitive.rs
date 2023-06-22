@@ -79,7 +79,7 @@ impl<P: BitsPrimitive> Primitive<P> {
     }
 }
 
-struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
+pub(crate) struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
     ptr: NonNull<U>,
     offset: usize,
     phantom: PhantomData<P>,
@@ -87,7 +87,7 @@ struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
 
 impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
-    fn new(ptr: NonNull<U>, offset: usize) -> Self {
+    pub(crate) fn new(ptr: NonNull<U>, offset: usize) -> Self {
         PrimitiveAccessor {
             ptr,
             offset,
@@ -96,7 +96,7 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     }
 
     #[inline]
-    fn get(&self) -> P {
+    pub(crate) fn get(&self) -> P {
         let mut value = P::ZERO;
         unsafe {
             copy_bits_raw(self.ptr.as_ptr(), self.offset, &mut value, 0, P::BIT_COUNT);

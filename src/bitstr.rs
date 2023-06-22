@@ -5,7 +5,7 @@ use std::ops::{
 };
 use std::ptr::NonNull;
 
-use crate::refrepr::{RefRepr, TypedRefComponents};
+use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents};
 use crate::{Bit, BitValue, BitsPrimitive, Primitive};
 
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
@@ -175,7 +175,24 @@ impl BitStr {
         (start <= end && end <= components.metadata.bit_count).then(|| {
             components.metadata.offset += start;
             components.metadata.bit_count = end - start;
-            components.encode()
+
+            struct Selector;
+            impl RefComponentsSelector for Selector {
+                type Output = RefRepr;
+                #[inline]
+                fn select<U: BitsPrimitive>(
+                    self,
+                    components: TypedRefComponents<U>,
+                ) -> Self::Output {
+                    let components = TypedRefComponents::new_normalized(
+                        components.ptr,
+                        components.offset,
+                        components.bit_count,
+                    );
+                    components.encode()
+                }
+            }
+            components.select(Selector)
         })
     }
 }
