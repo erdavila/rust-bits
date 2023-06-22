@@ -1,12 +1,13 @@
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
+use std::marker::PhantomData;
 use std::ops::{
     Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
     RangeToInclusive,
 };
 use std::ptr::NonNull;
 
-use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents};
-use crate::{Bit, BitValue, BitsPrimitive, Primitive};
+use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
 ///
@@ -80,8 +81,21 @@ impl BitStr {
     /// `None` is returned if the index is out of bounds.
     #[inline]
     pub fn get(&self, index: usize) -> Option<BitValue> {
-        // TODO: review implementation. Calling read() requires decoding the just encoded reference.
-        self.get_ref(index).map(|bit_ref| bit_ref.read())
+        struct Selector;
+        impl OnRangeSelector for Selector {
+            type Output = BitValue;
+            #[inline]
+            fn select<U: BitsPrimitive>(
+                self,
+                range_ref_components: TypedRefComponents<U>,
+            ) -> Self::Output {
+                let accessor =
+                    BitAccessor::new(range_ref_components.ptr, range_ref_components.offset);
+                accessor.get()
+            }
+        }
+
+        select_on_range(index..(index + 1), self.ref_components(), Selector)
     }
 
     /// Returns a reference to a bit.
@@ -127,9 +141,27 @@ impl BitStr {
 
     #[inline]
     pub fn get_primitive<P: BitsPrimitive>(&self, first_bit_index: usize) -> Option<P> {
-        // TODO: review implementation. Calling read() requires decoding the just encoded reference.
-        self.get_primitive_ref(first_bit_index)
-            .map(|p_ref| p_ref.read())
+        struct Selector<P>(PhantomData<P>);
+        impl<P: BitsPrimitive> OnRangeSelector for Selector<P> {
+            type Output = P;
+            #[inline]
+            fn select<U: BitsPrimitive>(
+                self,
+                range_ref_components: TypedRefComponents<U>,
+            ) -> Self::Output {
+                let accessor = PrimitiveAccessor::<P, U>::new(
+                    range_ref_components.ptr,
+                    range_ref_components.offset,
+                );
+                accessor.get()
+            }
+        }
+
+        select_on_range(
+            first_bit_index..(first_bit_index + P::BIT_COUNT),
+            self.ref_components(),
+            Selector(PhantomData),
+        )
     }
 
     #[inline]
@@ -157,44 +189,78 @@ impl BitStr {
 
     #[inline]
     fn get_range_ref_repr<R: RangeBounds<usize>>(&self, range: R) -> Option<RefRepr> {
-        let repr: RefRepr = unsafe { std::mem::transmute(self) };
-        let mut components = repr.decode();
+        let components = self.ref_components();
+        let range = resolve_range(range, components.metadata.bit_count);
 
-        let start = match range.start_bound() {
-            Bound::Included(start) => *start,
-            Bound::Excluded(start) => *start + 1,
-            Bound::Unbounded => 0,
-        };
-
-        let end = match range.end_bound() {
-            Bound::Included(end) => *end + 1,
-            Bound::Excluded(end) => *end,
-            Bound::Unbounded => components.metadata.bit_count,
-        };
-
-        (start <= end && end <= components.metadata.bit_count).then(|| {
-            components.metadata.offset += start;
-            components.metadata.bit_count = end - start;
-
-            struct Selector;
-            impl RefComponentsSelector for Selector {
-                type Output = RefRepr;
-                #[inline]
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let components = TypedRefComponents::new_normalized(
-                        components.ptr,
-                        components.offset,
-                        components.bit_count,
-                    );
-                    components.encode()
-                }
+        struct Selector;
+        impl OnRangeSelector for Selector {
+            type Output = RefRepr;
+            #[inline]
+            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
+                components.encode()
             }
-            components.select(Selector)
-        })
+        }
+
+        select_on_range(range, components, Selector)
     }
+
+    #[inline]
+    fn ref_components(&self) -> UntypedRefComponents {
+        let repr: RefRepr = unsafe { std::mem::transmute(self) };
+        repr.decode()
+    }
+}
+
+#[inline]
+fn resolve_range<R: RangeBounds<usize>>(range: R, len: usize) -> Range<usize> {
+    let start = match range.start_bound() {
+        Bound::Included(start) => *start,
+        Bound::Excluded(start) => *start + 1,
+        Bound::Unbounded => 0,
+    };
+
+    let end = match range.end_bound() {
+        Bound::Included(end) => *end + 1,
+        Bound::Excluded(end) => *end,
+        Bound::Unbounded => len,
+    };
+
+    start..end
+}
+
+#[inline]
+fn select_on_range<S: OnRangeSelector>(
+    range: Range<usize>,
+    components: UntypedRefComponents,
+    selector: S,
+) -> Option<S::Output> {
+    (range.start <= range.end && range.end <= components.metadata.bit_count).then(|| {
+        struct InnerSelector<S> {
+            range: Range<usize>,
+            selector: S,
+        }
+        impl<S: OnRangeSelector> RefComponentsSelector for InnerSelector<S> {
+            type Output = S::Output;
+
+            #[inline]
+            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
+                let components = TypedRefComponents::new_normalized(
+                    components.ptr,
+                    components.offset + self.range.start,
+                    self.range.len(),
+                );
+                self.selector.select(components)
+            }
+        }
+
+        components.select(InnerSelector { range, selector })
+    })
+}
+
+trait OnRangeSelector {
+    type Output;
+
+    fn select<U: BitsPrimitive>(self, range_ref_components: TypedRefComponents<U>) -> Self::Output;
 }
 
 macro_rules! impl_index {
