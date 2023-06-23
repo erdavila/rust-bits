@@ -172,7 +172,7 @@ trait BitIterator<B, PII: PrimitiveIterItem, S>: Iterator<Item = B> + DoubleEnde
     fn next_n(&mut self, len: usize) -> Option<S>;
     fn rev(self) -> impl BitIterator<B, P, S>;
     fn primitives<P: BitsPrimitive>(self) -> impl BitBlockIterator<PII::Item<P>, S>;
-    fn substrings(self, len: usize) -> impl BitBlockIterator<S, S>;
+    fn subslices(self, len: usize) -> impl BitBlockIterator<S, S>;
 }
 
 trait PrimitiveIterItem {
@@ -238,20 +238,20 @@ fn primitives_iteration() {
     let _: Option<BitString> = iter.into_remainder();
 }
 
-fn substrings_iteration() {
-    let iter = bit_str.iter().substrings(3);
+fn subslices() {
+    let iter = bit_str.iter().subslices(3);
     let _: Option<&BitStr> = iter.next();
     let _: Option<&BitStr> = iter.into_remainder();
 
-    let iter = bit_str.iter_ref().substrings(3);
+    let iter = bit_str.iter_ref().subslices(3);
     let _: Option<&BitStr> = iter.next();
     let _: Option<&BitStr> = iter.into_remainder();
 
-    let iter = bit_str.iter_mut().substrings(3);
+    let iter = bit_str.iter_mut().subslices(3);
     let _: Option<&mut BitStr> = iter.next();
     let _: Option<&mut BitStr> = iter.into_remainder();
 
-    let iter = bit_str.into_iter().substrings(3);
+    let iter = bit_str.into_iter().subslices(3);
     let _: Option<BitString> = iter.next();
     let _: Option<BitString> = iter.into_remainder();
 }

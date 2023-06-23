@@ -9,6 +9,10 @@ use std::ptr::NonNull;
 use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
+use self::iter::Iter;
+
+mod iter;
+
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
 ///
 /// [underlying memory]: UnderlyingMemory
@@ -202,6 +206,19 @@ impl BitStr {
         }
 
         select_on_range(range, components, Selector)
+    }
+
+    #[inline]
+    pub fn iter(&self) -> Iter {
+        let components = self.ref_components();
+        let metadata = components.metadata;
+        Iter {
+            ptr: components.ptr,
+            underlying_primitive: metadata.underlying_primitive,
+            start_offset: metadata.offset,
+            end_offset: metadata.offset + metadata.bit_count,
+            phantom: PhantomData,
+        }
     }
 
     #[inline]
