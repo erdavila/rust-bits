@@ -313,16 +313,36 @@ impl_range_index!(RangeTo<usize>); // ..y
 impl_range_index!(RangeFrom<usize>); // x..
 impl_range_index!(RangeFull); // ..
 
+macro_rules! return_false_if_ne {
+    ($e1:expr, $e2:expr) => {
+        if $e1 != $e2 {
+            return false;
+        }
+    };
+}
+
 impl PartialEq for BitStr {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        // TODO: optimize it
+        return_false_if_ne!(self.len(), other.len());
 
-        for i in 0..self.len() {
-            if self.get(i) != other.get(i) {
-                return false;
-            }
+        let mut self_iter = self.iter();
+        let mut other_iter = other.iter();
+
+        macro_rules! compare_with {
+            ($stmt:tt $($tt:tt)*) => {
+                $stmt let (Some(self_value), Some(other_value)) = (self_iter. $($tt)*, other_iter. $($tt)*) {
+                    return_false_if_ne!(self_value, other_value);
+                }
+            };
         }
+
+        compare_with!(while next_primitive::<u128>());
+        compare_with!(if next_primitive::<u64>());
+        compare_with!(if next_primitive::<u32>());
+        compare_with!(if next_primitive::<u16>());
+        compare_with!(if next_primitive::<u8>());
+        compare_with!(while next());
 
         true
     }
@@ -338,12 +358,34 @@ impl<const N: usize> PartialEq<[BitValue; N]> for BitStr {
 impl PartialEq<[BitValue]> for BitStr {
     #[inline]
     fn eq(&self, other: &[BitValue]) -> bool {
-        // TODO: optimize it
+        return_false_if_ne!(self.len(), other.len());
 
-        for i in 0..self.len() {
-            if self.get(i) != other.get(i).copied() {
-                return false;
-            }
+        let mut self_iter = self.iter();
+        let mut other_iter = other.iter();
+
+        macro_rules! compare_primitives {
+            ($stmt:tt, $type:ty) => {
+                $stmt let Some(self_bits) = self_iter.next_primitive::<$type>() {
+                    let mut other_bits = <$type>::ZERO;
+                    for i in 0..<$type>::BIT_COUNT {
+                        if let Some(&BitValue::One) = other_iter.next() {
+                            other_bits |= 1 << i;
+                        }
+                    }
+
+                    return_false_if_ne!(self_bits, other_bits);
+                }
+            };
+        }
+
+        compare_primitives!(while, u128);
+        compare_primitives!(if, u64);
+        compare_primitives!(if, u32);
+        compare_primitives!(if, u16);
+        compare_primitives!(if, u8);
+
+        while let (Some(bit1), Some(bit2)) = (self_iter.next(), other_iter.next()) {
+            return_false_if_ne!(bit1, *bit2);
         }
 
         true
@@ -616,30 +658,47 @@ mod tests {
 
     #[test]
     fn eq() {
-        let memory: [u8; 1] = [0b10010011];
+        let memory: [u16; 3] = [0xCDEF, 0xEFAB, 0xABCD]; // In memory: ABCDEFABCDEF
         let bit_str = BitStr::new_ref(&memory);
+        let bit_str_1 = &bit_str[8..20]; // In memory: BCD
+        let bit_str_2 = &bit_str[32..44]; // In memory: BCD
+        let bit_str_ne_1 = &bit_str[20..32]; // In memory: EFA
+        let bit_str_ne_2 = &bit_str[8..21];
+        let bit_str_ne_3 = &bit_str[8..19];
 
-        let memory_eq: [u8; 1] = [0b10010011];
-        let bit_str_eq = BitStr::new_ref(&memory_eq);
-
-        let memory_ne: [u8; 1] = [0b10000011];
-        let bit_str_ne = BitStr::new_ref(&memory_ne);
-
-        assert!(bit_str == bit_str);
-        assert!(bit_str == bit_str_eq);
-        assert!(bit_str != bit_str_ne);
+        assert!(bit_str_1 == bit_str_1);
+        assert!(bit_str_1 == bit_str_2);
+        assert!(bit_str_1 != bit_str_ne_1);
+        assert!(bit_str_1 != bit_str_ne_2);
+        assert!(bit_str_1 != bit_str_ne_3);
     }
 
     #[test]
     fn eq_bit_values() {
-        let memory: [u8; 1] = [0b10010011];
-        let bit_str = BitStr::new_ref(&memory);
-        let bit_substr = &bit_str[2..6];
+        let memory: [u8; 3] = [0b10010011, 0b01100110, 0b01101100]; // In memory: 01101100_01100110_10010011
+        let bit_str = &BitStr::new_ref(&memory)[3..21]; // In memory: 01100_01100110_10010
 
-        assert!(bit_str == &[One, One, Zero, Zero, One, Zero, Zero, One]);
-        assert!(bit_substr == &[Zero, Zero, One, Zero]);
-        assert!(bit_str == [One, One, Zero, Zero, One, Zero, Zero, One].as_ref());
-        assert!(bit_substr == [Zero, Zero, One, Zero].as_ref());
+        let bit_values = [
+            Zero, One, Zero, Zero, One, Zero, One, One, Zero, Zero, One, One, Zero, Zero, Zero,
+            One, One, Zero,
+        ];
+        let bit_values_ne_1 = {
+            let mut vals = bit_values;
+            vals[0] = !vals[0];
+            vals
+        };
+        let bit_values_ne_2 = {
+            let mut vals = bit_values;
+            let last_index = vals.len() - 1;
+            vals[last_index] = !vals[last_index];
+            vals
+        };
+
+        assert!(bit_str == &bit_values);
+        assert!(bit_str != &bit_values_ne_1);
+        assert!(bit_str != &bit_values_ne_2);
+        assert!(bit_str != &bit_values[1..]);
+        assert!(bit_str != &bit_values[..(bit_values.len() - 1)]);
     }
 
     #[test]
