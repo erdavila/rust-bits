@@ -498,14 +498,39 @@ impl Display for BitStr {
 impl Binary for BitStr {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: optimize it
+        struct Consumer {
+            bits: String,
+        }
+        impl ConsumeIterator for Consumer {
+            #[inline]
+            fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
+                let s = format!("{:0width$b}", value, width = P::BIT_COUNT);
+                self.bits.insert_str(0, &s);
+                Ok(())
+            }
 
-        let mut bits = String::with_capacity(self.len());
-        for i in (0..self.len()).rev() {
-            bits.push(if self[i].read().to_bool() { '1' } else { '0' });
+            #[inline]
+            fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()> {
+                let s = match value {
+                    BitValue::Zero => "0",
+                    BitValue::One => "1",
+                };
+                self.bits.insert_str(0, s);
+                Ok(())
+            }
         }
 
-        write!(f, "{}{bits}", if f.alternate() { "0b" } else { "" })
+        let iter = self.iter();
+        let mut consumer = Consumer {
+            bits: String::with_capacity(iter.len()),
+        };
+        consumer.consume_iterator(iter).unwrap();
+
+        if f.alternate() {
+            f.write_str("0b")?;
+        }
+
+        f.write_str(&consumer.bits)
     }
 }
 
@@ -826,16 +851,16 @@ mod tests {
 
     #[test]
     fn formatting() {
-        let memory: [u8; 2] = [0b00101011, 0b00001111];
-        let bit_str = BitStr::new_ref(memory.as_ref());
+        let memory: [u8; 2] = [0b00101011, 0b00101111]; // In memory: 0010111100101011
+        let bit_str = &BitStr::new_ref(memory.as_ref())[..15];
 
-        assert_eq!(format!("{bit_str}"), "0000111100101011");
-        assert_eq!(format!("{bit_str:b}"), "0000111100101011");
-        assert_eq!(format!("{bit_str:#b}"), "0b0000111100101011");
-        // assert_eq!(format!("{bit_str:x}"), "0f2b");
-        // assert_eq!(format!("{bit_str:#x}"), "0x0f2b");
-        // assert_eq!(format!("{bit_str:X}"), "0F2B");
-        // assert_eq!(format!("{bit_str:#X}"), "0x0F2B");
-        assert_eq!(format!("{bit_str:?}"), "\"0000111100101011\"");
+        assert_eq!(format!("{}", bit_str), "010111100101011");
+        assert_eq!(format!("{:b}", bit_str), "010111100101011");
+        assert_eq!(format!("{:#b}", bit_str), "0b010111100101011");
+        // assert_eq!(format!("{:x}", bit_str), "0f2b");
+        // assert_eq!(format!("{:#x}", bit_str), "0x0f2b");
+        // assert_eq!(format!("{:X}", bit_str), "0F2B");
+        // assert_eq!(format!("{:#X}", bit_str), "0x0F2B");
+        assert_eq!(format!("{:?}", bit_str), "\"010111100101011\"");
     }
 }
