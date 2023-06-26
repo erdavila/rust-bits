@@ -1,4 +1,5 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
+use std::hash::Hash;
 use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr, ShrAssign};
 
 /// Represents a basic element whose bits can be manipulated and referenced.
@@ -8,7 +9,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr, ShrAssign};
 /// It has implementations for all numeric unsigned types.
 pub trait BitsPrimitive
 where
-    Self: Sized + Copy + Eq + Default + Binary + LowerHex + UpperHex + Debug,
+    Self: Sized + Copy + Eq + Hash + Default + Binary + LowerHex + UpperHex + Debug,
     Self: BitAnd<Output = Self>,
     Self: BitAndAssign,
     Self: BitOrAssign,

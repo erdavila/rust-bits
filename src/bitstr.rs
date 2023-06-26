@@ -1,4 +1,5 @@
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{
     Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
@@ -313,38 +314,62 @@ impl_range_index!(RangeTo<usize>); // ..y
 impl_range_index!(RangeFrom<usize>); // x..
 impl_range_index!(RangeFull); // ..
 
-macro_rules! return_false_if_ne {
-    ($e1:expr, $e2:expr) => {
-        if $e1 != $e2 {
-            return false;
+trait ConsumeIterator {
+    fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()>;
+    fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()>;
+
+    fn consume_iterator(&mut self, mut iter: Iter) -> Result<(), ()> {
+        macro_rules! consume {
+            ($stmt:tt, $type:ty) => {
+                $stmt let Some(value) = iter.next_primitive::<$type>() {
+                    self.consume_primitive(value)?;
+                }
+            };
         }
-    };
+
+        consume!(while, u128);
+        consume!(if, u64);
+        consume!(if, u32);
+        consume!(if, u16);
+        consume!(if, u8);
+
+        for value in iter {
+            self.consume_remainder_bit(value)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl PartialEq for BitStr {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        return_false_if_ne!(self.len(), other.len());
+        if self.len() != other.len() {
+            return false;
+        };
 
-        let mut self_iter = self.iter();
-        let mut other_iter = other.iter();
+        struct Consumer<'a> {
+            other_iter: Iter<'a>,
+        }
+        impl<'a> ConsumeIterator for Consumer<'a> {
+            #[inline]
+            fn consume_primitive<P: BitsPrimitive>(&mut self, self_value: P) -> Result<(), ()> {
+                let other_value = self.other_iter.next_primitive::<P>().unwrap();
+                (self_value == other_value).then_some(()).ok_or(())
+            }
 
-        macro_rules! compare_with {
-            ($stmt:tt $($tt:tt)*) => {
-                $stmt let (Some(self_value), Some(other_value)) = (self_iter. $($tt)*, other_iter. $($tt)*) {
-                    return_false_if_ne!(self_value, other_value);
-                }
-            };
+            #[inline]
+            fn consume_remainder_bit(&mut self, self_value: BitValue) -> Result<(), ()> {
+                let other_value = self.other_iter.next().unwrap();
+                (self_value == other_value).then_some(()).ok_or(())
+            }
         }
 
-        compare_with!(while next_primitive::<u128>());
-        compare_with!(if next_primitive::<u64>());
-        compare_with!(if next_primitive::<u32>());
-        compare_with!(if next_primitive::<u16>());
-        compare_with!(if next_primitive::<u8>());
-        compare_with!(while next());
+        let self_iter = self.iter();
+        let other_iter = other.iter();
 
-        true
+        let mut consumer = Consumer { other_iter };
+        consumer.consume_iterator(self_iter).is_ok()
     }
 }
 
@@ -358,37 +383,63 @@ impl<const N: usize> PartialEq<[BitValue; N]> for BitStr {
 impl PartialEq<[BitValue]> for BitStr {
     #[inline]
     fn eq(&self, other: &[BitValue]) -> bool {
-        return_false_if_ne!(self.len(), other.len());
+        if self.len() != other.len() {
+            return false;
+        };
 
-        let mut self_iter = self.iter();
-        let mut other_iter = other.iter();
+        struct Consumer<'a> {
+            other_iter: std::slice::Iter<'a, BitValue>,
+        }
+        impl<'a> ConsumeIterator for Consumer<'a> {
+            #[inline]
+            fn consume_primitive<P: BitsPrimitive>(&mut self, self_bits: P) -> Result<(), ()> {
+                let mut other_bits = P::ZERO;
 
-        macro_rules! compare_primitives {
-            ($stmt:tt, $type:ty) => {
-                $stmt let Some(self_bits) = self_iter.next_primitive::<$type>() {
-                    let mut other_bits = <$type>::ZERO;
-                    for i in 0..<$type>::BIT_COUNT {
-                        if let Some(&BitValue::One) = other_iter.next() {
-                            other_bits |= 1 << i;
-                        }
+                for i in 0..P::BIT_COUNT {
+                    if let Some(BitValue::One) = self.other_iter.next() {
+                        other_bits |= P::ONE << i;
                     }
-
-                    return_false_if_ne!(self_bits, other_bits);
                 }
-            };
+
+                (self_bits == other_bits).then_some(()).ok_or(())
+            }
+
+            #[inline]
+            fn consume_remainder_bit(&mut self, self_value: BitValue) -> Result<(), ()> {
+                let other_value = self.other_iter.next().unwrap();
+                (self_value == *other_value).then_some(()).ok_or(())
+            }
         }
 
-        compare_primitives!(while, u128);
-        compare_primitives!(if, u64);
-        compare_primitives!(if, u32);
-        compare_primitives!(if, u16);
-        compare_primitives!(if, u8);
+        let self_iter = self.iter();
+        let other_iter = other.iter();
 
-        while let (Some(bit1), Some(bit2)) = (self_iter.next(), other_iter.next()) {
-            return_false_if_ne!(bit1, *bit2);
+        let mut consumer = Consumer { other_iter };
+        consumer.consume_iterator(self_iter).is_ok()
+    }
+}
+
+impl Hash for BitStr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        struct Consumer<'a, H> {
+            state: &'a mut H,
+        }
+        impl<'a, H: std::hash::Hasher> ConsumeIterator for Consumer<'a, H> {
+            #[inline]
+            fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
+                value.hash(self.state);
+                Ok(())
+            }
+
+            #[inline]
+            fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()> {
+                value.hash(self.state);
+                Ok(())
+            }
         }
 
-        true
+        let mut consumer = Consumer { state };
+        consumer.consume_iterator(self.iter()).unwrap();
     }
 }
 
