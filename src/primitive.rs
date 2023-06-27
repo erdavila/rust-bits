@@ -1,3 +1,4 @@
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
@@ -6,6 +7,7 @@ use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, Untyped
 use crate::BitsPrimitive;
 
 #[repr(C)]
+#[derive(Eq)]
 pub struct Primitive<P: BitsPrimitive> {
     _phantom: PhantomData<P>,
     _unsized: [()],
@@ -112,25 +114,57 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     }
 }
 
+impl<P: BitsPrimitive> PartialEq for Primitive<P> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        *self == other.read()
+    }
+}
+
+impl<P: BitsPrimitive> PartialEq<P> for Primitive<P> {
+    #[inline]
+    fn eq(&self, other: &P) -> bool {
+        self.read() == *other
+    }
+}
+
+impl<P: BitsPrimitive> Hash for Primitive<P> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.read().hash(state);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Not;
     use std::ptr::NonNull;
 
-    use crate::refrepr::TypedRefComponents;
+    use crate::refrepr::{RefRepr, TypedRefComponents};
     use crate::{BitsPrimitive, Primitive};
+
+    fn new_ref<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> &Primitive<P> {
+        let repr = repr::<P, U>(under, offset);
+        unsafe { std::mem::transmute(repr) }
+    }
+
+    fn new_mut<P: BitsPrimitive, U: BitsPrimitive>(
+        under: &mut U,
+        offset: usize,
+    ) -> &mut Primitive<P> {
+        let repr = repr::<P, U>(under, offset);
+        unsafe { std::mem::transmute(repr) }
+    }
+
+    fn repr<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> RefRepr {
+        let components =
+            TypedRefComponents::new_normalized(NonNull::from(under), offset, P::BIT_COUNT);
+        components.encode()
+    }
 
     #[test]
     fn read() {
         let memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory:: 10FEDCBA
-        let ptr = NonNull::from(&memory[0]);
-        let components = TypedRefComponents {
-            ptr,
-            offset: 12,
-            bit_count: u8::BIT_COUNT,
-        };
-        let repr = components.encode();
-        let p_ref: &Primitive<u8> = unsafe { std::mem::transmute(repr) };
+        let p_ref: &Primitive<u8> = new_ref(&memory[0], 12);
 
         let value = p_ref.read();
 
@@ -139,15 +173,8 @@ mod tests {
 
     #[test]
     fn write() {
-        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory: 10FEDCBA
-        let ptr = NonNull::from(&mut memory[0]);
-        let components = TypedRefComponents {
-            ptr,
-            offset: 12,
-            bit_count: u8::BIT_COUNT,
-        };
-        let repr = components.encode();
-        let p_ref: &mut Primitive<u8> = unsafe { std::mem::transmute(repr) };
+        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory:: 10FEDCBA
+        let p_ref: &mut Primitive<u8> = new_mut(&mut memory[0], 12);
 
         let previous_value = p_ref.write(0x76);
 
@@ -157,18 +184,25 @@ mod tests {
 
     #[test]
     fn modify() {
-        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory: 10FEDCBA
-        let ptr = NonNull::from(&mut memory[0]);
-        let components = TypedRefComponents {
-            ptr,
-            offset: 12,
-            bit_count: u8::BIT_COUNT,
-        };
-        let repr = components.encode();
-        let p_ref: &mut Primitive<u8> = unsafe { std::mem::transmute(repr) };
+        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory:: 10FEDCBA
+        let p_ref: &mut Primitive<u8> = new_mut(&mut memory[0], 12);
 
         p_ref.modify(Not::not);
 
         assert_eq!(memory, [0x2CBA, 0x10F1]); // In memory: 10F12CBA
+    }
+
+    #[test]
+    fn eq() {
+        let memory: [u16; 2] = [0xDCBA, 0xEDCE]; // In memory: EDCEDCBA
+        let p1: &Primitive<u8> = new_ref(&memory[0], 12);
+        let p2: &Primitive<u8> = new_ref(&memory[0], 24);
+        let p_ne: &Primitive<u8> = new_ref(&memory[0], 0);
+
+        assert!(p1 == p1);
+        assert!(p1 == p2);
+        assert!(p1 == &0xED);
+
+        assert!(p1 != p_ne);
     }
 }
