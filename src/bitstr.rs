@@ -1,4 +1,3 @@
-use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{
@@ -12,6 +11,7 @@ use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAcces
 
 use self::iter::Iter;
 
+mod fmt;
 mod iter;
 
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
@@ -488,73 +488,6 @@ impl Hash for BitStr {
     }
 }
 
-impl Display for BitStr {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Binary::fmt(self, f)
-    }
-}
-
-impl Binary for BitStr {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        struct Consumer {
-            bits: String,
-        }
-        impl ConsumeIterator for Consumer {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
-                let s = format!("{:0width$b}", value, width = P::BIT_COUNT);
-                self.bits.insert_str(0, &s);
-                Ok(())
-            }
-
-            #[inline]
-            fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()> {
-                let s = match value {
-                    BitValue::Zero => "0",
-                    BitValue::One => "1",
-                };
-                self.bits.insert_str(0, s);
-                Ok(())
-            }
-        }
-
-        let iter = self.iter();
-        let mut consumer = Consumer {
-            bits: String::with_capacity(iter.len()),
-        };
-        consumer.consume_iterator(iter).unwrap();
-
-        if f.alternate() {
-            f.write_str("0b")?;
-        }
-
-        f.write_str(&consumer.bits)
-    }
-}
-
-impl LowerHex for BitStr {
-    #[inline]
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
-impl UpperHex for BitStr {
-    #[inline]
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
-impl Debug for BitStr {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{self}\"")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::convert::identity;
@@ -847,20 +780,5 @@ mod tests {
         assert!(bit_str != &bit_values_ne_2);
         assert!(bit_str != &bit_values[1..]);
         assert!(bit_str != &bit_values[..(bit_values.len() - 1)]);
-    }
-
-    #[test]
-    fn formatting() {
-        let memory: [u8; 2] = [0b00101011, 0b00101111]; // In memory: 0010111100101011
-        let bit_str = &BitStr::new_ref(memory.as_ref())[..15];
-
-        assert_eq!(format!("{}", bit_str), "010111100101011");
-        assert_eq!(format!("{:b}", bit_str), "010111100101011");
-        assert_eq!(format!("{:#b}", bit_str), "0b010111100101011");
-        // assert_eq!(format!("{:x}", bit_str), "0f2b");
-        // assert_eq!(format!("{:#x}", bit_str), "0x0f2b");
-        // assert_eq!(format!("{:X}", bit_str), "0F2B");
-        // assert_eq!(format!("{:#X}", bit_str), "0x0F2B");
-        assert_eq!(format!("{:?}", bit_str), "\"010111100101011\"");
     }
 }
