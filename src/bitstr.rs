@@ -223,6 +223,51 @@ impl BitStr {
     }
 
     #[inline]
+    pub fn split_at(&self, index: usize) -> (&BitStr, &BitStr) {
+        let (msb_repr, lsb_repr) = self.split_at_repr(index);
+        unsafe { (std::mem::transmute(msb_repr), std::mem::transmute(lsb_repr)) }
+    }
+
+    #[inline]
+    pub fn split_at_mut(&mut self, index: usize) -> (&mut BitStr, &mut BitStr) {
+        let (msb_repr, lsb_repr) = self.split_at_repr(index);
+        unsafe { (std::mem::transmute(msb_repr), std::mem::transmute(lsb_repr)) }
+    }
+
+    #[inline]
+    fn split_at_repr(&self, index: usize) -> (RefRepr, RefRepr) {
+        let components = self.ref_components();
+
+        assert!(index <= components.metadata.bit_count, "invalid index");
+
+        components.select({
+            struct Selector(usize);
+            impl RefComponentsSelector for Selector {
+                type Output = (RefRepr, RefRepr);
+                #[inline]
+                fn select<U: BitsPrimitive>(
+                    self,
+                    components: TypedRefComponents<U>,
+                ) -> Self::Output {
+                    let lsb_components = TypedRefComponents::new_normalized(
+                        components.ptr,
+                        components.offset,
+                        self.0,
+                    );
+                    let msb_components = TypedRefComponents::new_normalized(
+                        components.ptr,
+                        components.offset + self.0,
+                        components.bit_count - self.0,
+                    );
+                    (msb_components.encode(), lsb_components.encode())
+                }
+            }
+
+            Selector(index)
+        })
+    }
+
+    #[inline]
     fn ref_components(&self) -> UntypedRefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
@@ -705,6 +750,33 @@ mod tests {
         let bit_substr: &BitStr = &bit_str[2..6];
         assert_eq!(bit_substr.len(), 4);
         assert_eq!(bit_substr, bit_str.get_range_ref(2..6).unwrap());
+    }
+
+    #[test]
+    fn split_at() {
+        let memory: [u8; 2] = [0b10010011, 0b01101100];
+        let bit_str = &BitStr::new_ref(&memory)[1..15];
+
+        let (msb, lsb) = bit_str.split_at(6);
+        assert_eq!(msb, &bit_str[6..]);
+        assert_eq!(lsb, &bit_str[..6]);
+
+        let (msb, lsb) = bit_str.split_at(0);
+        assert_eq!(msb, &bit_str[0..]);
+        assert_eq!(lsb, &bit_str[..0]);
+
+        let (msb, lsb) = bit_str.split_at(14);
+        assert_eq!(msb, &bit_str[14..]);
+        assert_eq!(lsb, &bit_str[..14]);
+    }
+
+    #[test]
+    #[should_panic = "invalid index"]
+    fn split_at_panic() {
+        let memory: [u8; 2] = [0b10010011, 0b01101100];
+        let bit_str = &BitStr::new_ref(&memory)[1..15];
+
+        bit_str.split_at(15);
     }
 
     #[test]

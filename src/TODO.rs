@@ -112,9 +112,9 @@ fn accessing() {
     let index: usize;
     let bit: &Bit = &bit_str[index];
 
-    let (lsb, msb): (&BitStr, &BitStr) = bit_str.split_at(index);
+    let (msb, lsb): (&BitStr, &BitStr) = bit_str.split_at(index);
 
-    let (lsb, msb): (&mut BitStr, &mut BitStr) = bit_str.split_at_mut(index);
+    let (msb, lsb): (&mut BitStr, &mut BitStr) = bit_str.split_at_mut(index);
 
     let b: bool = bit_str.lsb().matches(source()); // like {starts,ends}_with()
 }
