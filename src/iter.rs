@@ -2,7 +2,7 @@ use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
-use crate::refrepr::{RefRepr, TypedRefComponents};
+use crate::refrepr::{RefRepr, TypedRefComponents, UntypedRefComponents};
 use crate::utils::normalize_ptr_and_offset;
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 use crate::{BitStr, BitsPrimitive, Primitive, PrimitiveAccessor};
@@ -20,11 +20,24 @@ pub trait BitIterator<'a>:
 }
 
 pub(crate) struct RawIter<'a> {
-    pub(crate) ptr: NonNull<()>,
-    pub(crate) underlying_primitive: BitsPrimitiveDiscriminant,
-    pub(crate) start_offset: usize,
-    pub(crate) end_offset: usize,
-    pub(crate) phantom: PhantomData<&'a ()>,
+    ptr: NonNull<()>,
+    underlying_primitive: BitsPrimitiveDiscriminant,
+    start_offset: usize,
+    end_offset: usize,
+    phantom: PhantomData<&'a ()>,
+}
+impl<'a> From<UntypedRefComponents> for RawIter<'a> {
+    #[inline]
+    fn from(components: UntypedRefComponents) -> Self {
+        let metadata = components.metadata;
+        RawIter {
+            ptr: components.ptr,
+            underlying_primitive: metadata.underlying_primitive,
+            start_offset: metadata.offset,
+            end_offset: metadata.offset + metadata.bit_count,
+            phantom: PhantomData,
+        }
+    }
 }
 impl<'a> RawIter<'a> {
     #[inline]
@@ -189,6 +202,64 @@ impl<'a> BitIterator<'a> for IterRef<'a> {
 }
 impl<'a> ExactSizeIterator for IterRef<'a> {}
 impl<'a> FusedIterator for IterRef<'a> {}
+
+pub struct IterMut<'a>(pub(crate) RawIter<'a>);
+impl<'a> Iterator for IterMut<'a> {
+    type Item = &'a mut Bit;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0
+            .next_at_front(1, select_ref_repr)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+}
+impl<'a> DoubleEndedIterator for IterMut<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0
+            .next_at_back(1, select_ref_repr)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+}
+impl<'a> BitIterator<'a> for IterMut<'a> {
+    type PrimitiveItem<P: BitsPrimitive + 'a> = &'a mut Primitive<P>;
+    type SliceItem = &'a mut BitStr;
+
+    #[inline]
+    fn next_primitive<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
+        self.0
+            .next_at_front(P::BIT_COUNT, select_ref_repr)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
+        self.0
+            .next_at_back(P::BIT_COUNT, select_ref_repr)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    fn next_n(&mut self, len: usize) -> Option<Self::SliceItem> {
+        self.0
+            .next_at_front(len, select_ref_repr)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+
+    #[inline]
+    fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem> {
+        self.0
+            .next_at_back(len, select_ref_repr)
+            .map(|repr| unsafe { std::mem::transmute(repr) })
+    }
+}
+impl<'a> ExactSizeIterator for IterMut<'a> {}
+impl<'a> FusedIterator for IterMut<'a> {}
 
 #[inline]
 fn select_bit_value(args: SelectOutputArgs) -> BitValue {
@@ -418,5 +489,49 @@ mod tests {
         assert!(iter.next_n_back(1).is_none());
         assert_eq!(iter.next_n(0).unwrap(), &[]);
         assert_eq!(iter.next_n_back(0).unwrap(), &[]);
+    }
+
+    #[test]
+    fn iter_mut() {
+        let mut memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let bit_str = BitStr::new_mut(&mut memory);
+
+        let mut iter = bit_str[4..44].iter_mut(); // 87654FEDCB
+
+        assert_eq!(iter.len(), 40); // [87654FEDCB]
+        assert_eq!(iter.next().unwrap().read(), One); // B: 101[1]
+        assert_eq!(iter.next().unwrap().read(), One); // B: 10[1]1
+        assert_eq!(iter.next().unwrap().write(One), Zero); // B: 1[0]11 -> F: 1[1]11
+        assert_eq!(iter.next().unwrap().read(), One); // F: [1]111
+        assert_eq!(iter.len(), 36); // [87654FEDC]F
+        iter.next_primitive::<u16>().unwrap().modify(|value| {
+            assert_eq!(value, 0xFEDC);
+            !value
+        }); // [87654]0123]F
+        assert_eq!(iter.len(), 20); // [87654]0123F
+        assert_eq!(iter.next_n(4).unwrap(), &[Zero, Zero, One, Zero]); // 4: 0100
+        assert_eq!(iter.len(), 16); // [8765]40123F
+        assert_eq!(iter.next_back().unwrap().read(), One); // 8: [1]000
+        assert_eq!(iter.next_back().unwrap().read(), Zero); // 8: 1[0]00
+        assert_eq!(iter.next_back().unwrap().read(), Zero); // 8: 10[0]0
+        assert_eq!(iter.next_back().unwrap().read(), Zero); // 8: 100[0]
+        assert_eq!(iter.len(), 12); // 8[765]40123F
+        assert_eq!(iter.next_primitive_back::<u8>().unwrap().read(), 0x76);
+        assert_eq!(iter.len(), 4); // 876[5]40123F
+        assert!(iter.next_primitive::<u8>().is_none());
+        assert!(iter.next_primitive_back::<u8>().is_none());
+        assert!(iter.next_n(5).is_none());
+        assert!(iter.next_n_back(5).is_none());
+        assert_eq!(iter.next_n_back(4).unwrap(), &[One, Zero, One, Zero]); // 5: 0101
+        assert_eq!(iter.len(), 0); // 8765[]40123F
+        assert!(iter.next().is_none());
+        assert!(iter.next_primitive::<u8>().is_none());
+        assert!(iter.next_n(1).is_none());
+        assert!(iter.next_back().is_none());
+        assert!(iter.next_primitive_back::<u8>().is_none());
+        assert!(iter.next_n_back(1).is_none());
+        assert_eq!(iter.next_n(0).unwrap(), &[]);
+        assert_eq!(iter.next_n_back(0).unwrap(), &[]);
+        assert_eq!(memory, [0x23FA, 0x5401, 0x9876]); // In memory: 9876540123FA
     }
 }
