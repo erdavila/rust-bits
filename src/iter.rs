@@ -25,6 +25,15 @@ pub trait BitIterator<'a>:
             phantom: PhantomData,
         }
     }
+
+    #[inline]
+    fn subslices(self, len: usize) -> SubslicesIter<'a, Self> {
+        SubslicesIter {
+            inner: self,
+            slice_len: len,
+            phantom: PhantomData,
+        }
+    }
 }
 
 pub(crate) struct RawIter<'a> {
@@ -405,6 +414,59 @@ impl<'a, P: BitsPrimitive, I: BitIterator<'a>> DoubleEndedIterator for Primitive
 impl<'a, P: BitsPrimitive, I: BitIterator<'a>> ExactSizeIterator for PrimitivesIter<'a, P, I> {}
 impl<'a, P: BitsPrimitive, I: BitIterator<'a>> FusedIterator for PrimitivesIter<'a, P, I> {}
 
+pub struct SubslicesIter<'a, I: BitIterator<'a>> {
+    inner: I,
+    slice_len: usize,
+    phantom: PhantomData<&'a ()>,
+}
+impl<'a, I: BitIterator<'a>> BitBlockIterator for SubslicesIter<'a, I> {
+    type Remainder = I::SliceItem;
+
+    #[inline]
+    fn into_remainder(mut self) -> Option<Self::Remainder> {
+        for _ in self.by_ref() {}
+
+        let remainder_bit_count = self.remainder_bit_count();
+        if remainder_bit_count > 0 {
+            self.inner.next_n(remainder_bit_count)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn block_len(&self) -> usize {
+        self.slice_len
+    }
+
+    #[inline]
+    fn remainder_bit_count(&self) -> usize {
+        self.inner.len() % self.block_len()
+    }
+}
+impl<'a, I: BitIterator<'a>> Iterator for SubslicesIter<'a, I> {
+    type Item = I::SliceItem;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.inner.len() / self.block_len();
+        (len, Some(len))
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next_n(self.slice_len)
+    }
+}
+impl<'a, I: BitIterator<'a>> DoubleEndedIterator for SubslicesIter<'a, I> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_n_back(self.slice_len)
+    }
+}
+impl<'a, I: BitIterator<'a>> ExactSizeIterator for SubslicesIter<'a, I> {}
+impl<'a, I: BitIterator<'a>> FusedIterator for SubslicesIter<'a, I> {}
+
 #[cfg(test)]
 mod tests {
     use crate::iter::{BitBlockIterator, BitIterator};
@@ -647,6 +709,58 @@ mod tests {
         assert_eq!(iter.next_back().unwrap().write(0x54), 0xED); // F[EDCB]A -> F54[CB]A
         assert_eq!(iter.len(), 1);
         assert_eq!(iter.next().unwrap().write(0x32), 0xCB); // F54[CB]A -> F54[]32A
+        assert_eq!(iter.len(), 0);
+        assert!(iter.next().is_none());
+        assert!(iter.next_back().is_none());
+        assert!(iter.into_remainder().is_none());
+        assert_eq!(memory, [0x2A, 0x43, 0xF5]); // In memory: F5432A
+    }
+
+    #[test]
+    fn subslices() {
+        let memory: [u16; 2] = [0xDCBA, 0x32FE]; // In memory: 32FEDCBA
+        let bit_str = &BitStr::new_ref(&memory)[8..28]; // 3[2FEDC]BA
+
+        let mut iter = bit_str.iter().subslices(8);
+
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next().unwrap().get_primitive::<u8>(0).unwrap(), 0xDC); // 3[2FE]DCBA
+        assert_eq!(iter.len(), 1);
+        assert_eq!(
+            iter.next_back().unwrap().get_primitive::<u8>(0).unwrap(),
+            0x2F
+        ); // 32F[E]DCBA
+        assert_eq!(iter.len(), 0);
+        assert!(iter.next().is_none());
+        assert!(iter.next_back().is_none());
+        assert_eq!(iter.into_remainder().unwrap(), &[Zero, One, One, One]); // E: 1110
+    }
+
+    #[test]
+    fn subslices_mut_no_remainder() {
+        let mut memory: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: FEDCBA
+        let bit_str = &mut BitStr::new_mut(&mut memory)[4..20]; // F[EDCB]A
+
+        let mut iter = bit_str.iter_mut().subslices(8);
+
+        assert_eq!(iter.len(), 2);
+        assert_eq!(
+            iter.next_back()
+                .unwrap()
+                .get_primitive_mut::<u8>(0)
+                .unwrap()
+                .write(0x54),
+            0xED
+        ); // F[EDCB]A -> F54[CB]A
+        assert_eq!(iter.len(), 1);
+        assert_eq!(
+            iter.next()
+                .unwrap()
+                .get_primitive_mut::<u8>(0)
+                .unwrap()
+                .write(0x32),
+            0xCB
+        ); // F54[CB]A -> F54[]32A
         assert_eq!(iter.len(), 0);
         assert!(iter.next().is_none());
         assert!(iter.next_back().is_none());
