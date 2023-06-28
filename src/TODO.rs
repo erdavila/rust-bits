@@ -167,41 +167,43 @@ fn adding_or_removing() {
     bit_str.fill(bit);
 }
 
-trait BitIterator<B, PII: PrimitiveIterItem, S>: Iterator<Item = B> + DoubleEndedIterator + ExactSizeIterator + FusedIterator {
-    fn next_primitive<P: BitsPrimitive>(&mut self) -> Option<PII::Item<P>>;
-    fn next_n(&mut self, len: usize) -> Option<S>;
-    fn rev(self) -> impl BitIterator<B, P, S>;
-    fn primitives<P: BitsPrimitive>(self) -> impl BitBlockIterator<PII::Item<P>, S>;
-    fn subslices(self, len: usize) -> impl BitBlockIterator<S, S>;
-}
+trait BitIterator: Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator {
+    type PrimitiveItem<P>;
+    type SliceItem;
 
-trait PrimitiveIterItem {
-    type Item<P: BitsPrimitive>;
-}
-
-struct PrimitiveCopy;
-impl PrimitiveIterItem for PrimitiveCopy {
-    type Item<P: BitsPrimitive> = P;
-}
-
-struct PrimitiveRef;
-impl PrimitiveIterItem for PrimitiveRef {
-    type Item<P: BitsPrimitive> = &Primitive<P>;
-}
-
-struct PrimitiveMut;
-impl PrimitiveIterItem for PrimitiveMut {
-    type Item<P: BitsPrimitive> = &mut Primitive<P>;
+    fn next_primitive<P: BitsPrimitive>(&mut self) -> Option<Self::PrimitiveItem<P>>;
+    fn next_n(&mut self, len: usize) -> Option<SliceItem>;
+    fn rev(self) -> impl BitIterator;
+    fn primitives<P: BitsPrimitive>(self) -> impl BitBlockIterator<Self::PrimitiveItem<P>, Self::SliceItem>;
+    fn subslices(self, len: usize) -> impl BitBlockIterator<Self::SliceItem, Self::SliceItem>;
 }
 
 struct Iter {}
-impl BitIterator<BitValue, PrimitiveCopy, &BitStr> for Iter {}
+impl Iterator for Iter {
+    type Item = BitValue;
+}
+impl BitIterator for Iter {
+    type PrimitiveItem<P> = P;
+    type SliceItem = &BitStr;
+}
 
 struct IterRef {}
-impl BitIterator<&Bit, PrimitiveRef, &BitStr> for IterRef {}
+impl Iterator for IterRef {
+    type Item = &Bit;
+}
+impl BitIterator for IterRef {
+    type PrimitiveItem<P> = &Primitive<P>;
+    type SliceItem = &BitStr;
+}
 
 struct IterMut {}
-impl BitIterator<&mut Bit, PrimitiveMut, &mut BitStr> for IterMut {}
+impl Iterator for IterMut {
+    type Item = &mut BitStr;
+}
+impl BitIterator for IterMut {
+    type PrimitiveItem<P> = &mut Primitive<P>;
+    type SliceItem = &mut BitStr;
+}
 
 fn iteration() {
     let iter: Iter = bit_str.iter();
@@ -210,7 +212,13 @@ fn iteration() {
 }
 
 struct IntoIter {}
-impl BitIterator<BitValue, PrimitiveCopy, BitString> for IntoIter {}
+impl Iterator for IntoIter {
+    type Item = BitValue;
+}
+impl BitIterator for IntoIter {
+    type PrimitiveItem<P> = P;
+    type SliceItem = BitString;
+}
 
 fn consumption() {
     let iter: impl IntoIter = bit_string.into_iter();

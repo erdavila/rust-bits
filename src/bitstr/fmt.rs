@@ -35,7 +35,7 @@ impl BitStr {
                 }
             }
         }
-        impl ConsumeIterator for Consumer {
+        impl ConsumeIterator<'_> for Consumer {
             #[inline]
             fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
                 let str = self.format_hex(value, P::BIT_COUNT / BITS_PER_HEX_DIGIT);
@@ -88,7 +88,7 @@ impl Binary for BitStr {
         struct Consumer {
             bits: String,
         }
-        impl ConsumeIterator for Consumer {
+        impl ConsumeIterator<'_> for Consumer {
             #[inline]
             fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
                 let s = format!("{:0width$b}", value, width = P::BIT_COUNT);

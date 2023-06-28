@@ -6,15 +6,11 @@ use std::ops::{
 };
 use std::ptr::NonNull;
 
+use crate::iter::{BitIterator, Iter, IterRef, RawIter};
 use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
-use self::iter::Iter;
-use self::iter_ref::IterRef;
-
 mod fmt;
-mod iter;
-mod iter_ref;
 
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
 ///
@@ -215,26 +211,26 @@ impl BitStr {
     pub fn iter(&self) -> Iter {
         let components = self.ref_components();
         let metadata = components.metadata;
-        Iter {
+        Iter(RawIter {
             ptr: components.ptr,
             underlying_primitive: metadata.underlying_primitive,
             start_offset: metadata.offset,
             end_offset: metadata.offset + metadata.bit_count,
             phantom: PhantomData,
-        }
+        })
     }
 
     #[inline]
     pub fn iter_ref(&self) -> IterRef {
         let components = self.ref_components();
         let metadata = components.metadata;
-        IterRef {
+        IterRef(RawIter {
             ptr: components.ptr,
             underlying_primitive: metadata.underlying_primitive,
             start_offset: metadata.offset,
             end_offset: metadata.offset + metadata.bit_count,
             phantom: PhantomData,
-        }
+        })
     }
 
     #[inline]
@@ -374,8 +370,8 @@ impl_range_index!(RangeTo<usize>); // ..y
 impl_range_index!(RangeFrom<usize>); // x..
 impl_range_index!(RangeFull); // ..
 
-trait ConsumeIterator {
-    fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()>;
+trait ConsumeIterator<'a> {
+    fn consume_primitive<P: BitsPrimitive + 'a>(&mut self, value: P) -> Result<(), ()>;
     fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()>;
 
     fn consume_iterator(&mut self, mut iter: Iter) -> Result<(), ()> {
@@ -411,9 +407,12 @@ impl PartialEq for BitStr {
         struct Consumer<'a> {
             other_iter: Iter<'a>,
         }
-        impl<'a> ConsumeIterator for Consumer<'a> {
+        impl<'a> ConsumeIterator<'a> for Consumer<'a> {
             #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, self_value: P) -> Result<(), ()> {
+            fn consume_primitive<P: BitsPrimitive + 'a>(
+                &mut self,
+                self_value: P,
+            ) -> Result<(), ()> {
                 let other_value = self.other_iter.next_primitive::<P>().unwrap();
                 (self_value == other_value).then_some(()).ok_or(())
             }
@@ -450,7 +449,7 @@ impl PartialEq<[BitValue]> for BitStr {
         struct Consumer<'a> {
             other_iter: std::slice::Iter<'a, BitValue>,
         }
-        impl<'a> ConsumeIterator for Consumer<'a> {
+        impl<'a> ConsumeIterator<'a> for Consumer<'a> {
             #[inline]
             fn consume_primitive<P: BitsPrimitive>(&mut self, self_bits: P) -> Result<(), ()> {
                 let mut other_bits = P::ZERO;
@@ -484,7 +483,7 @@ impl Hash for BitStr {
         struct Consumer<'a, H> {
             state: &'a mut H,
         }
-        impl<'a, H: std::hash::Hasher> ConsumeIterator for Consumer<'a, H> {
+        impl<'a, H: std::hash::Hasher> ConsumeIterator<'a> for Consumer<'a, H> {
             #[inline]
             fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
                 value.hash(self.state);

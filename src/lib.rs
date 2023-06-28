@@ -21,6 +21,7 @@ mod bitstr;
 mod bitstring;
 mod bitvalue;
 pub mod copy_bits;
+pub mod iter;
 mod primitive;
 mod refrepr;
 mod utils;
