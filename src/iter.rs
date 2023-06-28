@@ -19,6 +19,14 @@ pub trait BitIterator<'a>:
     fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem>;
 
     #[inline]
+    fn reverse(self) -> ReverseIter<'a, Self> {
+        ReverseIter {
+            inner: self,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
     fn primitives<P: BitsPrimitive>(self) -> PrimitivesIter<'a, P, Self> {
         PrimitivesIter {
             inner: self,
@@ -353,6 +361,56 @@ fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
         }
     })
 }
+
+pub struct ReverseIter<'a, I: BitIterator<'a>> {
+    inner: I,
+    phantom: PhantomData<&'a ()>,
+}
+impl<'a, I: BitIterator<'a>> Iterator for ReverseIter<'a, I> {
+    type Item = I::Item;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next_back()
+    }
+}
+impl<'a, I: BitIterator<'a>> DoubleEndedIterator for ReverseIter<'a, I> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+impl<'a, I: BitIterator<'a>> BitIterator<'a> for ReverseIter<'a, I> {
+    type PrimitiveItem<P: BitsPrimitive + 'a> = I::PrimitiveItem<P>;
+    type SliceItem = I::SliceItem;
+
+    #[inline]
+    fn next_primitive<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
+        self.inner.next_primitive_back::<P>()
+    }
+
+    #[inline]
+    fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
+        self.inner.next_primitive::<P>()
+    }
+
+    #[inline]
+    fn next_n(&mut self, len: usize) -> Option<Self::SliceItem> {
+        self.inner.next_n_back(len)
+    }
+
+    #[inline]
+    fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem> {
+        self.inner.next_n(len)
+    }
+}
+impl<'a, I: BitIterator<'a>> ExactSizeIterator for ReverseIter<'a, I> {}
+impl<'a, I: BitIterator<'a>> FusedIterator for ReverseIter<'a, I> {}
 
 trait BitBlockIterator: Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator {
     type Remainder;
@@ -766,5 +824,45 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.into_remainder().is_none());
         assert_eq!(memory, [0x2A, 0x43, 0xF5]); // In memory: F5432A
+    }
+
+    #[test]
+    fn reverse() {
+        let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let bit_str = BitStr::new_ref(&memory);
+
+        let mut iter = bit_str[4..44].iter().reverse(); // [87654FEDCB]
+
+        assert_eq!(iter.len(), 40); // [87654FEDCB]
+        assert_eq!(iter.next(), Some(One)); // 8: [1]000
+        assert_eq!(iter.next(), Some(Zero)); // 8: 1[0]00
+        assert_eq!(iter.next(), Some(Zero)); // 8: 10[0]0
+        assert_eq!(iter.next(), Some(Zero)); // 8: 100[0]
+        assert_eq!(iter.len(), 36); // 8[7654FEDCB]
+        assert_eq!(iter.next_primitive::<u16>(), Some(0x7654));
+        assert_eq!(iter.len(), 20); // 87654[FEDCB]
+        assert_eq!(iter.next_n(4).unwrap(), &[One, One, One, One]); // F: 1111
+        assert_eq!(iter.len(), 16); // 87654F[EDCB]
+        assert_eq!(iter.next_back(), Some(One)); // B: 101[1]
+        assert_eq!(iter.next_back(), Some(One)); // B: 10[1]1
+        assert_eq!(iter.next_back(), Some(Zero)); // B: 1[0]11
+        assert_eq!(iter.next_back(), Some(One)); // B: [1]011
+        assert_eq!(iter.len(), 12); // 87654F[EDC]B
+        assert_eq!(iter.next_primitive_back::<u8>(), Some(0xDC));
+        assert_eq!(iter.len(), 4); // 87654F[E]DCB
+        assert!(iter.next_primitive::<u8>().is_none());
+        assert!(iter.next_primitive_back::<u8>().is_none());
+        assert!(iter.next_n(5).is_none());
+        assert!(iter.next_n_back(5).is_none());
+        assert_eq!(iter.next_n_back(4).unwrap(), &[Zero, One, One, One]); // E: 1110
+        assert_eq!(iter.len(), 0); // 87654F[]EDCB
+        assert!(iter.next().is_none());
+        assert!(iter.next_primitive::<u8>().is_none());
+        assert!(iter.next_n(1).is_none());
+        assert!(iter.next_back().is_none());
+        assert!(iter.next_primitive_back::<u8>().is_none());
+        assert!(iter.next_n_back(1).is_none());
+        assert_eq!(iter.next_n(0).unwrap(), &[]);
+        assert_eq!(iter.next_n_back(0).unwrap(), &[]);
     }
 }
