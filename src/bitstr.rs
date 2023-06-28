@@ -10,9 +10,11 @@ use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, Untyped
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 use self::iter::Iter;
+use self::iter_ref::IterRef;
 
 mod fmt;
 mod iter;
+mod iter_ref;
 
 /// A reference to a fixed-length sequence of bits anywhere in [underlying memory].
 ///
@@ -214,6 +216,19 @@ impl BitStr {
         let components = self.ref_components();
         let metadata = components.metadata;
         Iter {
+            ptr: components.ptr,
+            underlying_primitive: metadata.underlying_primitive,
+            start_offset: metadata.offset,
+            end_offset: metadata.offset + metadata.bit_count,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn iter_ref(&self) -> IterRef {
+        let components = self.ref_components();
+        let metadata = components.metadata;
+        IterRef {
             ptr: components.ptr,
             underlying_primitive: metadata.underlying_primitive,
             start_offset: metadata.offset,
