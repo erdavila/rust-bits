@@ -8,7 +8,7 @@ use crate::{Bit, BitAccessor, BitValue, BitsPrimitiveDiscriminant, BitsPrimitive
 use crate::{BitStr, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 pub trait BitIterator<'a>:
-    Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator
+    Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator + Sized
 {
     type PrimitiveItem<P: BitsPrimitive + 'a>;
     type SliceItem;
@@ -17,6 +17,14 @@ pub trait BitIterator<'a>:
     fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>>;
     fn next_n(&mut self, len: usize) -> Option<Self::SliceItem>;
     fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem>;
+
+    #[inline]
+    fn primitives<P: BitsPrimitive>(self) -> PrimitivesIter<'a, P, Self> {
+        PrimitivesIter {
+            inner: self,
+            phantom: PhantomData,
+        }
+    }
 }
 
 pub(crate) struct RawIter<'a> {
@@ -337,9 +345,69 @@ fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
     })
 }
 
+trait BitBlockIterator: Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator {
+    type Remainder;
+
+    fn into_remainder(self) -> Option<Self::Remainder>;
+    fn block_len(&self) -> usize;
+    fn remainder_bit_count(&self) -> usize;
+}
+
+pub struct PrimitivesIter<'a, P: BitsPrimitive, I: BitIterator<'a>> {
+    inner: I,
+    phantom: PhantomData<&'a P>,
+}
+impl<'a, P: BitsPrimitive, I: BitIterator<'a>> BitBlockIterator for PrimitivesIter<'a, P, I> {
+    type Remainder = I::SliceItem;
+
+    #[inline]
+    fn into_remainder(mut self) -> Option<Self::Remainder> {
+        for _ in self.by_ref() {}
+
+        let remainder_bit_count = self.remainder_bit_count();
+        if remainder_bit_count > 0 {
+            self.inner.next_n(remainder_bit_count)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn block_len(&self) -> usize {
+        P::BIT_COUNT
+    }
+
+    #[inline]
+    fn remainder_bit_count(&self) -> usize {
+        self.inner.len() % self.block_len()
+    }
+}
+impl<'a, P: BitsPrimitive, I: BitIterator<'a>> Iterator for PrimitivesIter<'a, P, I> {
+    type Item = I::PrimitiveItem<P>;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.inner.len() / self.block_len();
+        (len, Some(len))
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next_primitive::<P>()
+    }
+}
+impl<'a, P: BitsPrimitive, I: BitIterator<'a>> DoubleEndedIterator for PrimitivesIter<'a, P, I> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_primitive_back::<P>()
+    }
+}
+impl<'a, P: BitsPrimitive, I: BitIterator<'a>> ExactSizeIterator for PrimitivesIter<'a, P, I> {}
+impl<'a, P: BitsPrimitive, I: BitIterator<'a>> FusedIterator for PrimitivesIter<'a, P, I> {}
+
 #[cfg(test)]
 mod tests {
-    use crate::iter::BitIterator;
+    use crate::iter::{BitBlockIterator, BitIterator};
     use crate::BitStr;
     use crate::BitValue::{One, Zero};
 
@@ -549,5 +617,40 @@ mod tests {
         assert_eq!(iter.next().unwrap(), Zero);
         assert_eq!(iter.next().unwrap(), Zero);
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn primitives() {
+        let memory: [u16; 2] = [0xDCBA, 0x32FE]; // In memory: 32FEDCBA
+        let bit_str = &BitStr::new_ref(&memory)[8..28]; // 3[2FEDC]BA
+
+        let mut iter = bit_str.iter().primitives::<u8>();
+
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(0xDC)); // 3[2FE]DCBA
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next_back(), Some(0x2F)); // 32F[E]DCBA
+        assert_eq!(iter.len(), 0);
+        assert!(iter.next().is_none());
+        assert!(iter.next_back().is_none());
+        assert_eq!(iter.into_remainder().unwrap(), &[Zero, One, One, One]); // E: 1110
+    }
+
+    #[test]
+    fn primitives_mut_no_remainder() {
+        let mut memory: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: FEDCBA
+        let bit_str = &mut BitStr::new_mut(&mut memory)[4..20]; // F[EDCB]A
+
+        let mut iter = bit_str.iter_mut().primitives::<u8>();
+
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next_back().unwrap().write(0x54), 0xED); // F[EDCB]A -> F54[CB]A
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next().unwrap().write(0x32), 0xCB); // F54[CB]A -> F54[]32A
+        assert_eq!(iter.len(), 0);
+        assert!(iter.next().is_none());
+        assert!(iter.next_back().is_none());
+        assert!(iter.into_remainder().is_none());
+        assert_eq!(memory, [0x2A, 0x43, 0xF5]); // In memory: F5432A
     }
 }
