@@ -1,23 +1,41 @@
 impl BitsSource for BitValue {}
+impl<const N: usize> BitsSource for [BitValue; N] {}
+impl<const N: usize> BitsSource for &[BitValue; N] {}
+impl BitsSource for &[BitValue] {}
+impl BitsSource for &Bit {}
+impl<P: BitsPrimitive> BitsSource for P {}
+impl<P: BitsPrimitive, const N: usize> BitsSource for [P; N] {}
+impl<P: BitsPrimitive, const N: usize> BitsSource for &[P; N] {}
+impl<P: BitsPrimitive> BitsSource for &[P] {}
+impl<P: BitsPrimitive> BitsSource for &Primitive<P> {}
 impl BitsSource for BitString {}
 impl BitsSource for &BitString {}
 impl BitsSource for &BitStr {}
-impl BitsSource for u8 {} // also for u16, u32, u64, u128, usize
-impl<B> BitsSource for [B] where B: BitsSource {}
-impl<B, const N: usize> BitsSource for [B; N] where B: BitsSource {} // ?
-impl<B> BitsSource for &[B] where B: BitsSource {} // ?
-impl<B, const N: usize> BitsSource for &[B; N] where B: BitsSource {} // ?
 
 fn bit_string_construction() {
     BitString::new();
     BitString::default();
     Default::default();
 
-    bit_string!("1001011");
-    bit_string!("b:1001011");
-    bit_string!("x:abe03da");
-    bit_string!("x:abe_03d");
-    bit_string!("x:abe03da", u8);
+    /*
+        Parsing format:
+            STRING := GROUPS_B
+            GROUPS_B := '0b'? BIN_DIGITS (':' GROUPS_H)?
+                      | '0x' HEX_DIGITS (':' GROUPS_B)?
+            GROUPS_H := '0x'? HEX_DIGITS (':' GROUPS_B)?
+                      | '0b' BIN_DIGITS (':' GROUPS_H)?
+            BIN_DIGITS := (BIN_DIGIT | '_')*
+            HEX_DIGITS := (HEX_DIGIT | '_')*
+            BIN_DIGIT := '0' | '1'
+            HEX_DIGIT := '0'..'1' | 'a'..'f' | 'A'..'F'
+
+            A group of HEX_DIGITS starting with '0b' MUST be prefixed with '0x'.
+            * This is not required if the starting digits are '0_b' or '_0b'.
+            Otherwise, the '0b' is recognized as a binary digits indicator.
+     */
+    let bit_string = bit_string!(literal_string);
+    let bit_string = bit_string!(literal_string, u8); // ... and other primitive types
+    let _: Result<BitString, _> = str.parse();
 
     let msb: usize;
     let lsb: usize;
@@ -27,18 +45,13 @@ fn bit_string_construction() {
     let len: usize;
     BitString::repeat(bit, len);
 
-    fn source() -> impl BitsSource;
-    BitString::from(source());
+    let source: impl BitsSource;
+    BitString::from(source);
 
-    fn source<const N: usize>() -> [impl BitsSource; N];
-    BitString::from(source());
-
-    fn source() -> &[impl BitsSource];
-    BitString::from(source());
-
-    fn iter<B: BitsSource>() -> impl IntoIterator<Item = B>;
-    fn iter<B: BitsSource>() -> impl IntoIterator<Item = &B>;
-    BitString::from_iter(iter());
+    let iterable: impl BitsSource;
+    let iterable: impl Iterator<Item = BitValue>;
+    let iterable: impl Iterator<Item = impl BitsPrimitive>;
+    BitString::from_iter(iterable);
 
     bit_string.clone();
 
@@ -61,10 +74,12 @@ fn bit_str_construction() {
     // Also for mut!
     let p: &Primitive<u8>; // ... and other primitive types
     let bit_str: &BitStr = p.as_bit_str();
+    let bit_str: &BitStr = p.as_ref();
 
     // Also for mut!
     let bit: &Bit;
     let bit_str: &BitStr = bit.as_bit_str();
+    let bit_str: &BitStr = bit.as_ref();
 }
 
 fn inspecting() {
@@ -115,8 +130,6 @@ fn accessing() {
     let (msb, lsb): (&BitStr, &BitStr) = bit_str.split_at(index);
 
     let (msb, lsb): (&mut BitStr, &mut BitStr) = bit_str.split_at_mut(index);
-
-    let b: bool = bit_str.lsb().matches(source()); // like {starts,ends}_with()
 }
 
 fn adding() {
@@ -125,7 +138,7 @@ fn adding() {
     bit_string.insert(index, source());
 
     fn source() -> impl BitsSource;
-    bit_string.lsb_mut().push(source());
+    bit_string.lsb().push(source());
 }
 
 fn removing() {
@@ -137,19 +150,19 @@ fn removing() {
     let removed: Option<BitString> = bit_string.remove_n(begin..end);
 
     let count: usize;
-    let popped: Option<BitValue> = bit_string.lsb_mut().pop::<BitValue>();
-    let popped: Option<u8> = bit_string.lsb_mut().pop::<u8>(); // ... and other primitive types
-    let popped: Option<BitString> = bit_string.lsb_mut().pop_n(count);
-    let popped: BitString = bit_string.lsb_mut().pop_up_to(count);
+    let popped: Option<BitValue> = bit_string.lsb().pop::<BitValue>();
+    let popped: Option<u8> = bit_string.lsb().pop::<u8>(); // ... and other primitive types
+    let popped: Option<BitString> = bit_string.lsb().pop_n(count);
+    let popped: BitString = bit_string.lsb().pop_up_to(count);
 
     let bit: BitValue;
-    let count: usize = bit_string.lsb_mut().strip(bit);
+    let count: usize = bit_string.lsb().strip(bit);
 
     let count: usize;
-    bit_string.lsb_mut().discard(count);
+    bit_string.lsb().discard(count);
 
     let len: usize;
-    bit_string.lsb_mut().truncate(len);
+    bit_string.lsb().truncate(len);
 
     bit_string.clear();
 }
@@ -157,7 +170,7 @@ fn removing() {
 fn adding_or_removing() {
     let bit: BitValue;
     let new_len: usize;
-    bit_string.lsb_mut().resize(new_len, bit);
+    bit_string.lsb().resize(new_len, bit);
     assert_eq!(bs.len(), new_len);
 
     fn source() -> impl BitsSource;
@@ -205,12 +218,6 @@ impl BitIterator for IterMut {
     type SliceItem = &mut BitStr;
 }
 
-fn iteration() {
-    let iter: Iter = bit_str.iter();
-    let iter: IterRef = bit_str.iter_ref();
-    let iter: IterMut = bit_str.iter_mut();
-}
-
 struct IntoIter {}
 impl Iterator for IntoIter {
     type Item = BitValue;
@@ -220,8 +227,18 @@ impl BitIterator for IntoIter {
     type SliceItem = BitString;
 }
 
+fn iteration() {
+    let iter: Iter = bit_str.iter();
+    let iter: IterRef = bit_str.iter_ref();
+    let iter: IterMut = bit_str.iter_mut();
+
+    for bit_ref in bit_str {}
+    for bit_value in bit_string {}
+}
+
 fn consumption() {
-    let iter: impl IntoIter = bit_string.into_iter();
+    let iter: IterRef = bit_str.into_iter();
+    let iter: IntoIter = bit_string.into_iter();
 }
 
 trait BitBlockIterator<T, R>: Iterator<Item = T> + DoubleEndedIterator + ExactSizeIterator + FusedIterator {
@@ -300,16 +317,22 @@ fn rotation() {
     bit_str.rotate_right(count);
 }
 
-fn concatenation() {
-    let result: BitString = msb_bit_source + lsb_bit_source;
+/*
+    lhs_bit_source can be any BitsSource if rhs_bit_source is a bitstring-like type.
+    rhs_bit_source can be any BitsSource if lhs_bit_source is a bitstring-like type.
+    A bitstring-like type is any of BitString, &BitString or &BitStr.
+ */
 
-    bit_string.lsb_mut() += bit_source;
+fn concatenation() {
+    let result: BitString = msb_lhs_bit_source + lsb_rhs_bit_source;
+
+    bit_string.lsb() += bit_source;
 }
 
 fn and_or_xor() {
     // All ops for | (OR) and ^ (XOR) also
 
-    let result: BitString = bit_source_1 & bit_source_2;
+    let result: BitString = lhs_bit_source & rhs_bit_source;
 
     // May grow at MSB end
     bit_string &= bit_source;
@@ -322,15 +345,15 @@ fn not() {
 }
 
 fn eq() {
-    let result: bool = bit_source_1 == bit_source_2; // LEXICOGRAPHICAL comparison ("010" != "0010")
+    let result: bool = lhs_bit_source == rhs_bit_source; // LEXICOGRAPHICAL comparison ("010" != "0010")
 
-    let result: bool = bit_source_1.num_eq(bit_source_2); // NUMERIC comparison - ("010" == "0010")
+    let result: bool = lhs_bit_source.num_eq(rhs_bit_source); // NUMERIC comparison ("010" == "0010")
 }
 
 fn ord() {
-    let result: Ordering = bit_source_1.cmp(bit_source_2); // LEXICOGRAPHICAL comparison ("010" > "0011")
+    let result: Ordering = lhs_bit_source.cmp(rhs_bit_source); // LEXICOGRAPHICAL comparison ("010" > "0011")
 
-    let result: Ordering = bit_source_1.num_cmp(bit_source_2); // NUMERIC comparison - ("010" < "0011")
+    let result: Ordering = lhs_bit_source.num_cmp(rhs_bit_source); // NUMERIC comparison ("010" < "0011")
 }
 
 fn shifting() {
