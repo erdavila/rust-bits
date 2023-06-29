@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 
 use crate::copy_bits::copy_bits_raw;
 use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
-use crate::BitsPrimitive;
+use crate::{BitStr, BitsPrimitive};
 
 #[repr(C)]
 #[derive(Eq)]
@@ -79,6 +79,16 @@ impl<P: BitsPrimitive> Primitive<P> {
         debug_assert!(components.metadata.bit_count == P::BIT_COUNT);
         components
     }
+
+    #[inline]
+    pub fn as_bit_str(&self) -> &BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    #[inline]
+    pub fn as_bit_str_mut(&mut self) -> &mut BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
 }
 
 pub(crate) struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
@@ -129,8 +139,23 @@ impl<P: BitsPrimitive> PartialEq<P> for Primitive<P> {
 }
 
 impl<P: BitsPrimitive> Hash for Primitive<P> {
+    #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.read().hash(state);
+    }
+}
+
+impl<P: BitsPrimitive> AsRef<BitStr> for Primitive<P> {
+    #[inline]
+    fn as_ref(&self) -> &BitStr {
+        self.as_bit_str()
+    }
+}
+
+impl<P: BitsPrimitive> AsMut<BitStr> for Primitive<P> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut BitStr {
+        self.as_bit_str_mut()
     }
 }
 
@@ -140,7 +165,7 @@ mod tests {
     use std::ptr::NonNull;
 
     use crate::refrepr::{RefRepr, TypedRefComponents};
-    use crate::{BitsPrimitive, Primitive};
+    use crate::{BitStr, BitsPrimitive, Primitive};
 
     fn new_ref<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> &Primitive<P> {
         let repr = repr::<P, U>(under, offset);
@@ -204,5 +229,32 @@ mod tests {
         assert!(p1 == &0xED);
 
         assert!(p1 != p_ne);
+    }
+
+    #[test]
+    fn as_ref() {
+        let memory: [u16; 1] = [0xDCBA];
+        let p_ref: &Primitive<u8> = BitStr::new_ref(&memory)[1..15]
+            .get_primitive_ref(3)
+            .unwrap();
+
+        let bit_ref: &BitStr = p_ref.as_ref();
+
+        assert_eq!(bit_ref, &BitStr::new_ref(&memory)[4..12]);
+    }
+
+    #[test]
+    fn as_mut() {
+        let mut memory: [u16; 1] = [0xDCBA];
+        let p_ref: &mut Primitive<u8> = BitStr::new_mut(&mut memory)[1..15]
+            .get_primitive_mut(3)
+            .unwrap();
+
+        let bit_ref: &mut BitStr = p_ref.as_mut();
+
+        for bit in bit_ref.iter_mut() {
+            bit.modify(Not::not);
+        }
+        assert_eq!(memory, [0xD34A]);
     }
 }

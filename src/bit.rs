@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 
 use crate::bitvalue::BitValue;
 use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
-use crate::BitsPrimitive;
+use crate::{BitStr, BitsPrimitive};
 
 /// Representation of a reference to a single bit in a [underlying memory].
 ///
@@ -98,6 +98,16 @@ impl Bit {
         debug_assert_eq!(components.metadata.bit_count, 1);
         components
     }
+
+    #[inline]
+    pub fn as_bit_str(&self) -> &BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    #[inline]
+    pub fn as_bit_str_mut(&mut self) -> &mut BitStr {
+        unsafe { std::mem::transmute(self) }
+    }
 }
 
 pub(crate) struct BitAccessor<P: BitsPrimitive> {
@@ -172,6 +182,20 @@ impl Hash for Bit {
     }
 }
 
+impl AsRef<BitStr> for Bit {
+    #[inline]
+    fn as_ref(&self) -> &BitStr {
+        self.as_bit_str()
+    }
+}
+
+impl AsMut<BitStr> for Bit {
+    #[inline]
+    fn as_mut(&mut self) -> &mut BitStr {
+        self.as_bit_str_mut()
+    }
+}
+
 impl Debug for Bit {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -188,7 +212,7 @@ mod tests {
 
     use crate::refrepr::{RefRepr, TypedRefComponents};
     use crate::BitValue::{One, Zero};
-    use crate::{Bit, BitsPrimitive};
+    use crate::{Bit, BitStr, BitsPrimitive};
 
     fn new_ref<U: BitsPrimitive>(under: &U, bit_index: usize) -> &Bit {
         let repr = repr(under, bit_index);
@@ -285,5 +309,35 @@ mod tests {
 
         assert_eq!(hash_value(bit0), hash_value(Zero));
         assert_eq!(hash_value(bit1), hash_value(One));
+    }
+
+    #[test]
+    fn as_ref() {
+        let memory = [0b10010011u8];
+        let bit_str = BitStr::new_ref(&memory);
+        for (i, value) in [One, One, Zero, Zero, One, Zero, Zero, One]
+            .into_iter()
+            .enumerate()
+        {
+            let bit_ref = bit_str.get_ref(i).unwrap();
+
+            let bit_str: &BitStr = bit_ref.as_ref();
+
+            assert_eq!(bit_str, &[value]);
+        }
+    }
+
+    #[test]
+    fn as_mut() {
+        let mut memory = [0b10010011u8];
+        let bit_str = BitStr::new_mut(&mut memory);
+        for bit_ref in bit_str.iter_mut() {
+            //
+
+            let bit_str: &mut BitStr = bit_ref.as_mut();
+
+            bit_str.get_mut(0).unwrap().modify(Not::not);
+        }
+        assert_eq!(memory, [0b01101100]);
     }
 }
