@@ -359,6 +359,16 @@ impl_range_index!(RangeTo<usize>); // ..y
 impl_range_index!(RangeFrom<usize>); // x..
 impl_range_index!(RangeFull); // ..
 
+impl<'a> IntoIterator for &'a BitStr {
+    type Item = &'a Bit;
+    type IntoIter = IterRef<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_ref()
+    }
+}
+
 trait ConsumeIterator<'a> {
     fn consume_primitive<P: BitsPrimitive + 'a>(&mut self, value: P) -> Result<(), ()>;
     fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()>;

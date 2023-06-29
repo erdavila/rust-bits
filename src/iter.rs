@@ -534,4 +534,20 @@ mod tests {
         assert_eq!(iter.next_n_back(0).unwrap(), &[]);
         assert_eq!(memory, [0x23FA, 0x5401, 0x9876]); // In memory: 9876540123FA
     }
+
+    #[test]
+    fn into_iter() {
+        let memory = [0b10010011u8];
+        let bit_str = &BitStr::new_ref(&memory)[1..7];
+
+        let mut iter = bit_str.into_iter();
+
+        assert_eq!(iter.next().unwrap(), One);
+        assert_eq!(iter.next().unwrap(), Zero);
+        assert_eq!(iter.next().unwrap(), Zero);
+        assert_eq!(iter.next().unwrap(), One);
+        assert_eq!(iter.next().unwrap(), Zero);
+        assert_eq!(iter.next().unwrap(), Zero);
+        assert!(iter.next().is_none());
+    }
 }
