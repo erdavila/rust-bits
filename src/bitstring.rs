@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 use linear_deque::LinearDeque;
 
 use crate::refrepr::{RefRepr, TypedRefComponents};
-use crate::{BitStr, BitsPrimitive};
+use crate::{BitStr, BitValue, BitsPrimitive};
 
 #[derive(Clone, Debug)]
 pub struct BitString<U: BitsPrimitive = usize> {
@@ -62,6 +62,16 @@ impl<U: BitsPrimitive> BitString<U> {
 
         components.encode()
     }
+
+    #[inline]
+    pub fn lsb(&mut self) -> impl BitStringEnd {
+        BitStringLsbEnd(self)
+    }
+
+    #[inline]
+    pub fn msb(&mut self) -> impl BitStringEnd {
+        BitStringMsbEnd(self)
+    }
 }
 
 impl<U: BitsPrimitive> Deref for BitString<U> {
@@ -87,9 +97,59 @@ impl<U: BitsPrimitive> Default for BitString<U> {
     }
 }
 
+pub trait BitStringEnd<'a> {
+    fn push(&mut self, value: BitValue);
+}
+
+pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
+impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
+    fn push(&mut self, value: BitValue) {
+        let space = self.0.offset;
+
+        if space >= 1 {
+            self.0.offset -= 1;
+            if value == BitValue::One {
+                self.0.buffer[0] |= U::ONE << self.0.offset;
+            }
+        } else {
+            self.0.offset = U::BIT_COUNT - 1;
+            let elem = match value {
+                BitValue::Zero => U::ZERO,
+                BitValue::One => U::ONE << self.0.offset,
+            };
+            self.0.buffer.push_front(elem);
+        }
+
+        self.0.bit_count += 1;
+    }
+}
+
+pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
+impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
+    fn push(&mut self, value: BitValue) {
+        let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset - self.0.len();
+
+        if space >= 1 {
+            if value == BitValue::One {
+                let last_index = self.0.buffer.len() - 1;
+                self.0.buffer[last_index] |= U::ONE << (U::BIT_COUNT - space);
+            }
+        } else {
+            let elem = match value {
+                BitValue::Zero => U::ZERO,
+                BitValue::One => U::ONE,
+            };
+            self.0.buffer.push_back(elem);
+        }
+
+        self.0.bit_count += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{BitStr, BitString};
+    use crate::BitValue::{One, Zero};
+    use crate::{BitStr, BitString, BitStringEnd};
 
     #[test]
     fn new() {
@@ -106,5 +166,21 @@ mod tests {
 
         assert_eq!(str.len(), 0);
         assert!(str.is_empty());
+    }
+
+    #[test]
+    fn push() {
+        let mut string: BitString = BitString::new();
+
+        string.msb().push(One); // [1]
+        string.lsb().push(Zero); // 1[0]
+        string.msb().push(Zero); // [0]10
+        string.lsb().push(One); // 010[1]
+
+        assert_eq!(string.len(), 4);
+        assert_eq!(string.get(0), Some(One));
+        assert_eq!(string.get(1), Some(Zero));
+        assert_eq!(string.get(2), Some(One));
+        assert_eq!(string.get(3), Some(Zero));
     }
 }
