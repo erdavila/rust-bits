@@ -24,6 +24,11 @@ pub(crate) fn max_value_for_bit_count(bit_count: usize) -> usize {
 }
 
 #[inline]
+pub(crate) fn required_elements_for_bit_count<P: BitsPrimitive>(bit_count: usize) -> usize {
+    bit_count / P::BIT_COUNT + if bit_count % P::BIT_COUNT != 0 { 1 } else { 0 }
+}
+
+#[inline]
 pub(crate) unsafe fn normalize_const_ptr_and_offset<P: BitsPrimitive>(
     ptr: *const P,
     offset: usize,
@@ -217,6 +222,17 @@ mod tests {
         assert_eq!(bit_count_to_values_count(3), 8);
         assert_eq!(bit_count_to_values_count(4), 16);
         assert_eq!(bit_count_to_values_count(5), 32);
+    }
+
+    #[test]
+    fn required_elements_for_bit_count() {
+        use super::required_elements_for_bit_count;
+
+        assert_eq!(required_elements_for_bit_count::<u8>(7), 1);
+        assert_eq!(required_elements_for_bit_count::<u8>(8), 1);
+        assert_eq!(required_elements_for_bit_count::<u8>(9), 2);
+        assert_eq!(required_elements_for_bit_count::<u8>(16), 2);
+        assert_eq!(required_elements_for_bit_count::<u8>(17), 3);
     }
 
     #[test]

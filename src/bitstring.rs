@@ -1,10 +1,11 @@
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
-use linear_deque::LinearDeque;
+use linear_deque::{LinearDeque, SetReservedSpace};
 
 use crate::copy_bits::copy_bits;
 use crate::refrepr::{RefRepr, TypedRefComponents};
+use crate::utils::{required_elements_for_bit_count, CountedBits};
 use crate::{BitStr, BitValue, BitsPrimitive};
 
 #[derive(Clone, Debug)]
@@ -32,14 +33,46 @@ impl<U: BitsPrimitive> BitString<U> {
     }
 
     #[inline]
-    pub fn from_with_underlying_type<P: BitsPrimitive>(value: &[P]) -> Self {
+    pub fn from_primitives_with_underlying_type<P: BitsPrimitive>(value: &[P]) -> Self {
         let bit_count = value.len() * P::BIT_COUNT;
-        let buffer_elems = (bit_count + U::BIT_COUNT - 1) / U::BIT_COUNT;
+        let buffer_elems = required_elements_for_bit_count::<U>(bit_count);
 
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, U::ZERO);
 
         copy_bits(value, 0, &mut buffer, 0, bit_count);
+
+        BitString {
+            buffer,
+            offset: 0,
+            bit_count,
+        }
+    }
+
+    #[inline]
+    pub fn from_bitvalues_with_underlying_type(values: &[BitValue]) -> Self {
+        let bit_count = values.len();
+        let buffer_elems = required_elements_for_bit_count::<U>(bit_count);
+
+        let mut buffer = LinearDeque::new();
+        buffer.set_reserved_space(
+            SetReservedSpace::Keep,
+            SetReservedSpace::GrowTo(buffer_elems),
+        );
+
+        let mut primitive_bits = CountedBits::new();
+
+        for bit in values.iter().copied() {
+            primitive_bits.push_msb_value(bit);
+            if primitive_bits.count == U::BIT_COUNT {
+                buffer.push_back(primitive_bits.bits);
+                primitive_bits.clear();
+            }
+        }
+
+        if primitive_bits.count > 0 {
+            buffer.push_back(primitive_bits.bits);
+        }
 
         BitString {
             buffer,
@@ -111,7 +144,14 @@ impl<U: BitsPrimitive> DerefMut for BitString<U> {
 impl<P: BitsPrimitive> From<&[P]> for BitString<usize> {
     #[inline]
     fn from(value: &[P]) -> Self {
-        Self::from_with_underlying_type(value)
+        Self::from_primitives_with_underlying_type(value)
+    }
+}
+
+impl From<&[BitValue]> for BitString<usize> {
+    #[inline]
+    fn from(values: &[BitValue]) -> Self {
+        Self::from_bitvalues_with_underlying_type(values)
     }
 }
 
@@ -212,11 +252,45 @@ mod tests {
     }
 
     #[test]
-    fn from() {
+    fn from_primitives_array() {
         let source: [u8; 2] = [0b10010011, 0b01101100];
 
         let string = BitString::from(source.as_ref());
 
         assert_eq!(string.deref(), BitStr::new_ref(&source));
+    }
+
+    #[test]
+    fn from_bit_values_array() {
+        let source = [
+            One, Zero, One, One, Zero, Zero, One, One, Zero, One, One, Zero, Zero, One, One, Zero,
+            One, One, Zero, Zero,
+        ];
+
+        let string: BitString<u8> = BitString::from_bitvalues_with_underlying_type(source.as_ref());
+
+        assert_eq!(string.len(), 20);
+        let mut iter = string.iter();
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(One));
+        assert_eq!(iter.next(), Some(Zero));
+        assert_eq!(iter.next(), Some(Zero));
+        assert!(iter.next().is_none());
     }
 }
