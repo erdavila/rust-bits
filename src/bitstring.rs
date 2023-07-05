@@ -3,6 +3,7 @@ use std::ptr::NonNull;
 
 use linear_deque::LinearDeque;
 
+use crate::copy_bits::copy_bits;
 use crate::refrepr::{RefRepr, TypedRefComponents};
 use crate::{BitStr, BitValue, BitsPrimitive};
 
@@ -27,6 +28,23 @@ impl<U: BitsPrimitive> BitString<U> {
             buffer: LinearDeque::new(),
             offset: 0,
             bit_count: 0,
+        }
+    }
+
+    #[inline]
+    pub fn from_with_underlying_type<P: BitsPrimitive>(value: &[P]) -> Self {
+        let bit_count = value.len() * P::BIT_COUNT;
+        let buffer_elems = (bit_count + U::BIT_COUNT - 1) / U::BIT_COUNT;
+
+        let mut buffer = LinearDeque::new();
+        buffer.resize(buffer_elems, U::ZERO);
+
+        copy_bits(value, 0, &mut buffer, 0, bit_count);
+
+        BitString {
+            buffer,
+            offset: 0,
+            bit_count,
         }
     }
 
@@ -90,6 +108,13 @@ impl<U: BitsPrimitive> DerefMut for BitString<U> {
     }
 }
 
+impl<P: BitsPrimitive> From<&[P]> for BitString<usize> {
+    #[inline]
+    fn from(value: &[P]) -> Self {
+        Self::from_with_underlying_type(value)
+    }
+}
+
 impl<U: BitsPrimitive> Default for BitString<U> {
     #[inline]
     fn default() -> Self {
@@ -148,6 +173,8 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Deref;
+
     use crate::BitValue::{One, Zero};
     use crate::{BitStr, BitString, BitStringEnd};
 
@@ -182,5 +209,14 @@ mod tests {
         assert_eq!(string.get(1), Some(Zero));
         assert_eq!(string.get(2), Some(One));
         assert_eq!(string.get(3), Some(Zero));
+    }
+
+    #[test]
+    fn from() {
+        let source: [u8; 2] = [0b10010011, 0b01101100];
+
+        let string = BitString::from(source.as_ref());
+
+        assert_eq!(string.deref(), BitStr::new_ref(&source));
     }
 }
