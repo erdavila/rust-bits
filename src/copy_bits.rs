@@ -1,8 +1,8 @@
 use std::cmp;
-use std::fmt::{Binary, Debug, LowerHex, UpperHex};
-use std::mem;
 
-use crate::utils::{normalize_const_ptr_and_offset, normalize_mut_ptr_and_offset, BitPattern};
+use crate::utils::{
+    normalize_const_ptr_and_offset, normalize_mut_ptr_and_offset, BitPattern, CountedBits,
+};
 use crate::BitsPrimitive;
 
 /// Copies bits.
@@ -178,110 +178,6 @@ impl<P: BitsPrimitive> Destination<P> {
         self.write_next_elem(elem_bits);
 
         self.offset = 0;
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct CountedBits<P: BitsPrimitive> {
-    bits: P,
-    count: usize,
-}
-
-impl<P: BitsPrimitive> CountedBits<P> {
-    fn new() -> Self {
-        Self::with_count(P::ZERO, 0)
-    }
-
-    fn with_count(bits: P, count: usize) -> Self {
-        Self { bits, count }
-    }
-
-    fn from_usize(bits: CountedBits<usize>) -> Self {
-        debug_assert!(bits.count <= P::BIT_COUNT);
-        Self::with_count(P::from_usize(bits.bits), bits.count)
-    }
-
-    fn to_usize(self) -> CountedBits<usize> {
-        debug_assert!(self.count <= usize::BIT_COUNT);
-        CountedBits::with_count(self.bits.to_usize(), self.count)
-    }
-
-    fn pop_lsb(&mut self, bit_count: usize) -> Self {
-        let bit_count = cmp::min(bit_count, self.count);
-
-        if bit_count == P::BIT_COUNT {
-            mem::take(self)
-        } else {
-            let popped_bits = self.bits & BitPattern::new_with_zeros().and_ones(bit_count).get();
-            self.drop_lsb(bit_count);
-            Self::with_count(popped_bits, bit_count)
-        }
-    }
-
-    fn push_msb(&mut self, bits: Self) {
-        self.bits |= bits.bits << self.count;
-        self.count += bits.count;
-    }
-
-    fn drop_lsb(&mut self, bit_count: usize) {
-        self.bits >>= bit_count;
-        self.count -= bit_count;
-    }
-
-    fn room(&self) -> usize {
-        P::BIT_COUNT - self.count
-    }
-
-    fn is_full(&self) -> bool {
-        self.room() == 0
-    }
-
-    fn clear(&mut self) {
-        *self = Self::new();
-    }
-
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>, format: char) -> std::fmt::Result {
-        let formatted_bits = match format {
-            'b' => format!("{:b}", self.bits),
-            'x' => format!("{:x}", self.bits),
-            _ => format!("{:X}", self.bits),
-        };
-
-        f.debug_struct("CountedBits")
-            .field("bits", &formatted_bits)
-            .field("count", &self.count)
-            .field("BIT_COUNT", &P::BIT_COUNT)
-            .finish()
-    }
-}
-
-impl<P: BitsPrimitive> From<P> for CountedBits<P> {
-    fn from(bits: P) -> Self {
-        Self::with_count(bits, P::BIT_COUNT)
-    }
-}
-
-impl<P: BitsPrimitive> UpperHex for CountedBits<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.fmt(f, 'X')
-    }
-}
-
-impl<P: BitsPrimitive> LowerHex for CountedBits<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.fmt(f, 'x')
-    }
-}
-
-impl<P: BitsPrimitive> Binary for CountedBits<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.fmt(f, 'b')
-    }
-}
-
-impl<P: BitsPrimitive> Debug for CountedBits<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        UpperHex::fmt(self, f)
     }
 }
 

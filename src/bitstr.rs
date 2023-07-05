@@ -8,6 +8,7 @@ use std::ptr::NonNull;
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::utils::CountedBits;
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 mod fmt;
@@ -451,15 +452,13 @@ impl PartialEq<[BitValue]> for BitStr {
         impl<'a> ConsumeIterator<'a> for Consumer<'a> {
             #[inline]
             fn consume_primitive<P: BitsPrimitive>(&mut self, self_bits: P) -> Result<(), ()> {
-                let mut other_bits = P::ZERO;
+                let mut other_bits = CountedBits::new();
 
-                for i in 0..P::BIT_COUNT {
-                    if let Some(BitValue::One) = self.other_iter.next() {
-                        other_bits |= P::ONE << i;
-                    }
+                while other_bits.count < P::BIT_COUNT {
+                    other_bits.push_msb_value(*self.other_iter.next().unwrap());
                 }
 
-                (self_bits == other_bits).then_some(()).ok_or(())
+                (self_bits == other_bits.bits).then_some(()).ok_or(())
             }
 
             #[inline]
