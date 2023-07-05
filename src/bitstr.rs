@@ -269,7 +269,7 @@ impl BitStr {
     }
 
     #[inline]
-    fn ref_components(&self) -> UntypedRefComponents {
+    pub(crate) fn ref_components(&self) -> UntypedRefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
     }

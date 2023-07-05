@@ -1,10 +1,12 @@
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 use linear_deque::{LinearDeque, SetReservedSpace};
 
-use crate::copy_bits::copy_bits;
-use crate::refrepr::{RefRepr, TypedRefComponents};
+use crate::copy_bits::{copy_bits, copy_bits_raw};
+use crate::refrepr::RefRepr;
+use crate::refrepr::{RefComponentsSelector, TypedRefComponents};
 use crate::utils::{required_elements_for_bit_count, CountedBits};
 use crate::{BitStr, BitValue, BitsPrimitive};
 
@@ -82,6 +84,44 @@ impl<U: BitsPrimitive> BitString<U> {
     }
 
     #[inline]
+    pub fn from_bit_str_with_underlying_type(bit_str: &BitStr) -> Self {
+        bit_str.ref_components().select({
+            struct Selector<U>(PhantomData<U>);
+            impl<U: BitsPrimitive> RefComponentsSelector for Selector<U> {
+                type Output = BitString<U>;
+
+                #[inline]
+                fn select<P: BitsPrimitive>(
+                    self,
+                    components: TypedRefComponents<P>,
+                ) -> Self::Output {
+                    let mut buffer = LinearDeque::new();
+                    let buffer_elems = required_elements_for_bit_count::<U>(components.bit_count);
+
+                    buffer.resize(buffer_elems, U::ZERO);
+                    unsafe {
+                        copy_bits_raw(
+                            components.ptr.as_ptr(),
+                            components.offset,
+                            &mut buffer[0],
+                            0,
+                            components.bit_count,
+                        )
+                    };
+
+                    BitString {
+                        buffer,
+                        offset: 0,
+                        bit_count: components.bit_count,
+                    }
+                }
+            }
+
+            Selector::<U>(PhantomData)
+        })
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.bit_count
     }
@@ -152,6 +192,13 @@ impl From<&[BitValue]> for BitString<usize> {
     #[inline]
     fn from(values: &[BitValue]) -> Self {
         Self::from_bitvalues_with_underlying_type(values)
+    }
+}
+
+impl From<&BitStr> for BitString<usize> {
+    #[inline]
+    fn from(bit_str: &BitStr) -> Self {
+        Self::from_bit_str_with_underlying_type(bit_str)
     }
 }
 
@@ -292,5 +339,15 @@ mod tests {
         assert_eq!(iter.next(), Some(Zero));
         assert_eq!(iter.next(), Some(Zero));
         assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn from_bit_str() {
+        let source = BitString::from([0b10010011u8, 0b01101100u8].as_ref());
+
+        let string = BitString::from(&source[2..14]);
+
+        assert_eq!(string.len(), 12);
+        assert_eq!(string.deref(), &source[2..14]);
     }
 }
