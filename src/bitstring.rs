@@ -1,14 +1,11 @@
-use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
-use linear_deque::{LinearDeque, SetReservedSpace};
+use linear_deque::LinearDeque;
 
-use crate::copy_bits::{copy_bits, copy_bits_raw};
-use crate::refrepr::RefRepr;
-use crate::refrepr::{RefComponentsSelector, TypedRefComponents};
-use crate::utils::{required_elements_for_bit_count, CountedBits};
-use crate::{BitStr, BitValue, BitsPrimitive};
+use crate::refrepr::{RefRepr, TypedRefComponents};
+use crate::utils::required_elements_for_bit_count;
+use crate::{BitSource, BitStr, BitValue, BitsPrimitive};
 
 #[derive(Clone, Debug)]
 pub struct BitString<U: BitsPrimitive = usize> {
@@ -35,90 +32,20 @@ impl<U: BitsPrimitive> BitString<U> {
     }
 
     #[inline]
-    pub fn from_primitives_with_underlying_type<P: BitsPrimitive>(value: &[P]) -> Self {
-        let bit_count = value.len() * P::BIT_COUNT;
+    fn from_with_underlying_type<S: BitSource>(source: S) -> Self {
+        let bit_count = source.bit_count();
         let buffer_elems = required_elements_for_bit_count::<U>(bit_count);
 
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, U::ZERO);
 
-        copy_bits(value, 0, &mut buffer, 0, bit_count);
+        unsafe { source.copy_bits_to(NonNull::from(buffer.deref()).cast::<U>(), 0) };
 
         BitString {
             buffer,
             offset: 0,
             bit_count,
         }
-    }
-
-    #[inline]
-    pub fn from_bitvalues_with_underlying_type(values: &[BitValue]) -> Self {
-        let bit_count = values.len();
-        let buffer_elems = required_elements_for_bit_count::<U>(bit_count);
-
-        let mut buffer = LinearDeque::new();
-        buffer.set_reserved_space(
-            SetReservedSpace::Keep,
-            SetReservedSpace::GrowTo(buffer_elems),
-        );
-
-        let mut primitive_bits = CountedBits::new();
-
-        for bit in values.iter().copied() {
-            primitive_bits.push_msb_value(bit);
-            if primitive_bits.count == U::BIT_COUNT {
-                buffer.push_back(primitive_bits.bits);
-                primitive_bits.clear();
-            }
-        }
-
-        if primitive_bits.count > 0 {
-            buffer.push_back(primitive_bits.bits);
-        }
-
-        BitString {
-            buffer,
-            offset: 0,
-            bit_count,
-        }
-    }
-
-    #[inline]
-    pub fn from_bit_str_with_underlying_type(bit_str: &BitStr) -> Self {
-        bit_str.ref_components().select({
-            struct Selector<U>(PhantomData<U>);
-            impl<U: BitsPrimitive> RefComponentsSelector for Selector<U> {
-                type Output = BitString<U>;
-
-                #[inline]
-                fn select<P: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<P>,
-                ) -> Self::Output {
-                    let mut buffer = LinearDeque::new();
-                    let buffer_elems = required_elements_for_bit_count::<U>(components.bit_count);
-
-                    buffer.resize(buffer_elems, U::ZERO);
-                    unsafe {
-                        copy_bits_raw(
-                            components.ptr.as_ptr(),
-                            components.offset,
-                            &mut buffer[0],
-                            0,
-                            components.bit_count,
-                        )
-                    };
-
-                    BitString {
-                        buffer,
-                        offset: 0,
-                        bit_count: components.bit_count,
-                    }
-                }
-            }
-
-            Selector::<U>(PhantomData)
-        })
     }
 
     #[inline]
@@ -181,24 +108,10 @@ impl<U: BitsPrimitive> DerefMut for BitString<U> {
     }
 }
 
-impl<P: BitsPrimitive> From<&[P]> for BitString<usize> {
+impl<S: BitSource> From<S> for BitString<usize> {
     #[inline]
-    fn from(value: &[P]) -> Self {
-        Self::from_primitives_with_underlying_type(value)
-    }
-}
-
-impl From<&[BitValue]> for BitString<usize> {
-    #[inline]
-    fn from(values: &[BitValue]) -> Self {
-        Self::from_bitvalues_with_underlying_type(values)
-    }
-}
-
-impl From<&BitStr> for BitString<usize> {
-    #[inline]
-    fn from(bit_str: &BitStr) -> Self {
-        Self::from_bit_str_with_underlying_type(bit_str)
+    fn from(value: S) -> Self {
+        Self::from_with_underlying_type(value)
     }
 }
 
@@ -314,7 +227,7 @@ mod tests {
             One, One, Zero, Zero,
         ];
 
-        let string: BitString<u8> = BitString::from_bitvalues_with_underlying_type(source.as_ref());
+        let string: BitString<u8> = BitString::from_with_underlying_type(source.as_ref());
 
         assert_eq!(string.len(), 20);
         let mut iter = string.iter();

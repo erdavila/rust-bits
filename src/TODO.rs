@@ -1,15 +1,5 @@
-impl BitsSource for BitValue {}
-impl<const N: usize> BitsSource for [BitValue; N] {}
-impl<const N: usize> BitsSource for &[BitValue; N] {}
 impl BitsSource for &[BitValue] {}
-impl BitsSource for &Bit {}
-impl<P: BitsPrimitive> BitsSource for P {}
-impl<P: BitsPrimitive, const N: usize> BitsSource for [P; N] {}
-impl<P: BitsPrimitive, const N: usize> BitsSource for &[P; N] {}
 impl<P: BitsPrimitive> BitsSource for &[P] {}
-impl<P: BitsPrimitive> BitsSource for &Primitive<P> {}
-impl BitsSource for BitString {}
-impl BitsSource for &BitString {}
 impl BitsSource for &BitStr {}
 
 fn bit_string_construction() {
@@ -80,6 +70,10 @@ fn bit_str_construction() {
     let bit: &Bit;
     let bit_str: &BitStr = bit.as_bit_str();
     let bit_str: &BitStr = bit.as_ref();
+
+    // Also for mut!
+    let bit_str: &BitStr = bit_string.as_bit_str();
+    let bit_str: &BitStr = bit_string.as_ref();
 }
 
 fn inspecting() {
