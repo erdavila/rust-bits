@@ -108,6 +108,20 @@ impl<U: BitsPrimitive> DerefMut for BitString<U> {
     }
 }
 
+impl<U: BitsPrimitive> AsRef<BitStr> for BitString<U> {
+    #[inline]
+    fn as_ref(&self) -> &BitStr {
+        self.as_bit_str()
+    }
+}
+
+impl<U: BitsPrimitive> AsMut<BitStr> for BitString<U> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut BitStr {
+        self.as_bit_str_mut()
+    }
+}
+
 impl<S: BitSource> From<S> for BitString<usize> {
     #[inline]
     fn from(value: S) -> Self {
@@ -193,6 +207,24 @@ mod tests {
 
         assert_eq!(str.len(), 0);
         assert!(str.is_empty());
+    }
+
+    #[test]
+    fn as_ref() {
+        let string = BitString::from([0b10010011u8].as_ref());
+
+        let str: &BitStr = string.as_ref();
+
+        assert_eq!(str, &[One, One, Zero, Zero, One, Zero, Zero, One]);
+    }
+
+    #[test]
+    fn as_mut() {
+        let mut string = BitString::from([0b10010011u8].as_ref());
+
+        let str: &mut BitStr = string.as_mut();
+
+        assert_eq!(str, &[One, One, Zero, Zero, One, Zero, Zero, One]);
     }
 
     #[test]
