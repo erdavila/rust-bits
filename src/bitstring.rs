@@ -1,11 +1,14 @@
+use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 use linear_deque::LinearDeque;
 
+use crate::copy_bits::copy_bits_raw;
+use crate::iter::BitIterator;
 use crate::refrepr::{RefRepr, TypedRefComponents};
-use crate::utils::required_elements_for_bit_count;
-use crate::{BitSource, BitStr, BitValue, BitsPrimitive};
+use crate::utils::{normalize_ptr_and_offset, required_elements_for_bit_count};
+use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone, Debug)]
 pub struct BitString<U: BitsPrimitive = usize> {
@@ -129,6 +132,21 @@ impl<S: BitSource> From<S> for BitString<usize> {
     }
 }
 
+impl<U: BitsPrimitive> IntoIterator for BitString<U> {
+    type Item = BitValue;
+
+    type IntoIter = IntoIter<U>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter {
+            buffer: self.buffer,
+            start_offset: self.offset,
+            end_offset: self.offset + self.bit_count,
+        }
+    }
+}
+
 impl<U: BitsPrimitive> Default for BitString<U> {
     #[inline]
     fn default() -> Self {
@@ -185,10 +203,137 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
     }
 }
 
+pub struct IntoIter<U> {
+    buffer: LinearDeque<U>,
+    start_offset: usize,
+    end_offset: usize,
+}
+impl<U: BitsPrimitive> IntoIter<U> {
+    #[inline]
+    fn bit_count(&self) -> usize {
+        self.end_offset - self.start_offset
+    }
+
+    #[inline]
+    fn next_at_front(&mut self, bit_count: usize) -> Option<IntoIterNextItemParams<U>> {
+        (bit_count <= self.bit_count()).then(|| {
+            let ptr = NonNull::from(self.buffer.as_ref()).cast::<U>();
+            let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, self.start_offset) };
+            self.start_offset += bit_count;
+            IntoIterNextItemParams {
+                ptr,
+                offset,
+                bit_count,
+            }
+        })
+    }
+
+    #[inline]
+    fn next_at_back(&mut self, bit_count: usize) -> Option<IntoIterNextItemParams<U>> {
+        (bit_count <= self.bit_count()).then(|| {
+            let ptr = NonNull::from(self.buffer.as_ref()).cast::<U>();
+            self.end_offset -= bit_count;
+            let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, self.end_offset) };
+            IntoIterNextItemParams {
+                ptr,
+                offset,
+                bit_count,
+            }
+        })
+    }
+
+    #[inline]
+    fn get_bit_value(params: IntoIterNextItemParams<U>) -> BitValue {
+        let accessor = BitAccessor::new(params.ptr, params.offset);
+        accessor.get()
+    }
+
+    #[inline]
+    fn get_primitive<P: BitsPrimitive>(params: IntoIterNextItemParams<U>) -> P {
+        let accessor = PrimitiveAccessor::<P, _>::new(params.ptr, params.offset);
+        accessor.get()
+    }
+
+    #[inline]
+    fn get_slice(params: IntoIterNextItemParams<U>) -> BitString<U> {
+        let buffer_elems = required_elements_for_bit_count::<U>(params.bit_count);
+        let mut buffer = LinearDeque::new();
+        buffer.resize(buffer_elems, U::ZERO);
+        unsafe {
+            copy_bits_raw(
+                params.ptr.as_ptr(),
+                params.offset,
+                buffer.as_mut() as *mut [U] as *mut U,
+                0,
+                params.bit_count,
+            )
+        }
+        BitString {
+            buffer,
+            offset: 0,
+            bit_count: params.bit_count,
+        }
+    }
+}
+impl<U: BitsPrimitive> Iterator for IntoIter<U> {
+    type Item = BitValue;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.bit_count();
+        (len, Some(len))
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_at_front(1).map(Self::get_bit_value)
+    }
+}
+impl<U: BitsPrimitive> DoubleEndedIterator for IntoIter<U> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.next_at_back(1).map(Self::get_bit_value)
+    }
+}
+impl<'a, U: BitsPrimitive> BitIterator<'a> for IntoIter<U> {
+    type PrimitiveItem<P: BitsPrimitive + 'a> = P;
+
+    type SliceItem = BitString<U>;
+
+    #[inline]
+    fn next_primitive<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
+        self.next_at_front(P::BIT_COUNT).map(Self::get_primitive)
+    }
+
+    #[inline]
+    fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
+        self.next_at_back(P::BIT_COUNT).map(Self::get_primitive)
+    }
+
+    #[inline]
+    fn next_n(&mut self, len: usize) -> Option<Self::SliceItem> {
+        self.next_at_front(len).map(Self::get_slice)
+    }
+
+    #[inline]
+    fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem> {
+        self.next_at_back(len).map(Self::get_slice)
+    }
+}
+impl<U: BitsPrimitive> ExactSizeIterator for IntoIter<U> {}
+impl<U: BitsPrimitive> FusedIterator for IntoIter<U> {}
+
+struct IntoIterNextItemParams<U> {
+    ptr: NonNull<U>,
+    offset: usize,
+    bit_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Deref;
 
+    use crate::iter::BitIterator;
     use crate::BitValue::{One, Zero};
     use crate::{BitStr, BitString, BitStringEnd};
 
@@ -294,5 +439,58 @@ mod tests {
 
         assert_eq!(string.len(), 12);
         assert_eq!(string.deref(), &source[2..14]);
+    }
+
+    #[test]
+    fn into_iter() {
+        let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let bit_str = BitStr::new_ref(&memory);
+        let bit_string = BitString::from(&bit_str[4..44]); // 87654FEDCB
+
+        let mut iter = bit_string.into_iter();
+
+        assert_eq!(iter.len(), 40); // [87654FEDCB]
+        {
+            let bit_value: Option<crate::BitValue> = iter.next();
+            assert_eq!(bit_value.unwrap(), One); // B: 101[1]
+        }
+        assert_eq!(iter.next().unwrap(), One); // B: 10[1]1
+        assert_eq!(iter.next().unwrap(), Zero); // B: 1[0]11
+        assert_eq!(iter.next().unwrap(), One); // B: [1]011
+        assert_eq!(iter.len(), 36); // [87654FEDC]B
+        {
+            let primitive: Option<u16> = iter.next_primitive::<u16>();
+            assert_eq!(primitive.unwrap(), 0xFEDC);
+        }
+        assert_eq!(iter.len(), 20); // [87654]FEDCB
+        {
+            let bit_string: Option<BitString> = iter.next_n(4);
+            assert_eq!(bit_string.unwrap().as_ref(), &[Zero, Zero, One, Zero]); // 4: 0100
+        }
+        assert_eq!(iter.len(), 16); // [8765]4FEDCB
+        assert_eq!(iter.next_back().unwrap(), One); // 8: [1]000
+        assert_eq!(iter.next_back().unwrap(), Zero); // 8: 1[0]00
+        assert_eq!(iter.next_back().unwrap(), Zero); // 8: 10[0]0
+        assert_eq!(iter.next_back().unwrap(), Zero); // 8: 100[0]
+        assert_eq!(iter.len(), 12); // 8[765]4FEDCB
+        assert_eq!(iter.next_primitive_back::<u8>().unwrap(), 0x76);
+        assert_eq!(iter.len(), 4); // 876[5]4FEDCB
+        assert!(iter.next_primitive::<u8>().is_none());
+        assert!(iter.next_primitive_back::<u8>().is_none());
+        assert!(iter.next_n(5).is_none());
+        assert!(iter.next_n_back(5).is_none());
+        assert_eq!(
+            iter.next_n_back(4).unwrap().as_ref(),
+            &[One, Zero, One, Zero]
+        ); // 5: 0101
+        assert_eq!(iter.len(), 0); // 8765[]4FEDCB
+        assert!(iter.next().is_none());
+        assert!(iter.next_primitive::<u8>().is_none());
+        assert!(iter.next_n(1).is_none());
+        assert!(iter.next_back().is_none());
+        assert!(iter.next_primitive_back::<u8>().is_none());
+        assert!(iter.next_n_back(1).is_none());
+        assert_eq!(iter.next_n(0).unwrap().as_ref(), &[]);
+        assert_eq!(iter.next_n_back(0).unwrap().as_ref(), &[]);
     }
 }
