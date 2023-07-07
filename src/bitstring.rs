@@ -442,6 +442,33 @@ mod tests {
     }
 
     #[test]
+    fn from_other_types() {
+        let string = BitString::from(One);
+        assert_eq!(string.len(), 1);
+        assert_eq!(string[0].read(), One);
+
+        let string = BitString::from([One]);
+        assert_eq!(string.len(), 1);
+        assert_eq!(string[0].read(), One);
+
+        let string = BitString::from(0b10010011u8);
+        assert_eq!(string.len(), 8);
+        assert_eq!(string.deref(), BitStr::new_ref(&[0b10010011u8]));
+
+        let string = BitString::from([0b10010011u8]);
+        assert_eq!(string.len(), 8);
+        assert_eq!(string.deref(), BitStr::new_ref(&[0b10010011u8]));
+
+        let string = BitString::from(BitString::from(One));
+        assert_eq!(string.len(), 1);
+        assert_eq!(string[0].read(), One);
+
+        let string = BitString::from(&BitString::from(One));
+        assert_eq!(string.len(), 1);
+        assert_eq!(string[0].read(), One);
+    }
+
+    #[test]
     fn into_iter() {
         let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
         let bit_str = BitStr::new_ref(&memory);

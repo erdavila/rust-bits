@@ -5,7 +5,7 @@ use crate::bitstr::BitStr;
 use crate::copy_bits::copy_bits_raw;
 use crate::refrepr::{RefComponentsSelector, TypedRefComponents};
 use crate::utils::CountedBits;
-use crate::BitValue;
+use crate::{BitString, BitValue};
 
 pub trait BitSource {
     fn bit_count(&self) -> usize;
@@ -14,6 +14,42 @@ pub trait BitSource {
     ///
     /// TODO
     unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize);
+}
+
+macro_rules! forward_methods_as_array {
+    () => {
+        #[inline]
+        fn bit_count(&self) -> usize {
+            BitSource::bit_count(&[*self])
+        }
+
+        #[inline]
+        unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+            BitSource::copy_bits_to(&[*self], dst, offset);
+        }
+    };
+}
+
+macro_rules! forward_methods_as_ref {
+    () => {
+        #[inline]
+        fn bit_count(&self) -> usize {
+            BitSource::bit_count(&self.as_ref())
+        }
+
+        #[inline]
+        unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+            BitSource::copy_bits_to(&self.as_ref(), dst, offset);
+        }
+    };
+}
+
+impl BitSource for BitValue {
+    forward_methods_as_array!();
+}
+
+impl<const N: usize> BitSource for [BitValue; N] {
+    forward_methods_as_ref!();
 }
 
 impl BitSource for &[BitValue] {
@@ -49,6 +85,14 @@ impl BitSource for &[BitValue] {
     }
 }
 
+impl<P: BitsPrimitive> BitSource for P {
+    forward_methods_as_array!();
+}
+
+impl<P: BitsPrimitive, const N: usize> BitSource for [P; N] {
+    forward_methods_as_ref!();
+}
+
 impl<P: BitsPrimitive> BitSource for &[P] {
     #[inline]
     fn bit_count(&self) -> usize {
@@ -65,6 +109,10 @@ impl<P: BitsPrimitive> BitSource for &[P] {
             self.bit_count(),
         );
     }
+}
+
+impl BitSource for &BitString {
+    forward_methods_as_ref!();
 }
 
 impl BitSource for &BitStr {
