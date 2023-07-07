@@ -155,51 +155,54 @@ impl<U: BitsPrimitive> Default for BitString<U> {
 }
 
 pub trait BitStringEnd<'a> {
-    fn push(&mut self, value: BitValue);
+    fn push<S: BitSource>(&mut self, source: S);
 }
 
 pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
 impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
-    fn push(&mut self, value: BitValue) {
+    fn push<S: BitSource>(&mut self, source: S) {
+        let pushed_bits_count = source.bit_count();
         let space = self.0.offset;
 
-        if space >= 1 {
-            self.0.offset -= 1;
-            if value == BitValue::One {
-                self.0.buffer[0] |= U::ONE << self.0.offset;
-            }
-        } else {
-            self.0.offset = U::BIT_COUNT - 1;
-            let elem = match value {
-                BitValue::Zero => U::ZERO,
-                BitValue::One => U::ONE << self.0.offset,
-            };
-            self.0.buffer.push_front(elem);
+        if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
+            let additional_elems = required_elements_for_bit_count::<U>(additional_elems_bit_count);
+            self.0
+                .buffer
+                .resize_at_front(self.0.buffer.len() + additional_elems, U::ZERO);
+            self.0.offset += additional_elems * U::BIT_COUNT;
         }
+        self.0.offset -= pushed_bits_count;
 
-        self.0.bit_count += 1;
+        unsafe {
+            source.copy_bits_to(
+                NonNull::from(self.0.buffer.as_ref()).cast::<U>(),
+                self.0.offset,
+            )
+        };
+        self.0.bit_count += pushed_bits_count;
     }
 }
 
 pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
 impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
-    fn push(&mut self, value: BitValue) {
+    fn push<S: BitSource>(&mut self, source: S) {
+        let pushed_bits_count = source.bit_count();
         let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset - self.0.len();
 
-        if space >= 1 {
-            if value == BitValue::One {
-                let last_index = self.0.buffer.len() - 1;
-                self.0.buffer[last_index] |= U::ONE << (U::BIT_COUNT - space);
-            }
-        } else {
-            let elem = match value {
-                BitValue::Zero => U::ZERO,
-                BitValue::One => U::ONE,
-            };
-            self.0.buffer.push_back(elem);
+        if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
+            let additional_elems = required_elements_for_bit_count::<U>(additional_elems_bit_count);
+            self.0
+                .buffer
+                .resize_at_back(self.0.buffer.len() + additional_elems, U::ZERO);
         }
 
-        self.0.bit_count += 1;
+        unsafe {
+            source.copy_bits_to(
+                NonNull::from(self.0.buffer.as_ref()).cast::<U>(),
+                self.0.offset + self.0.bit_count,
+            )
+        };
+        self.0.bit_count += pushed_bits_count;
     }
 }
 
@@ -377,15 +380,20 @@ mod tests {
         let mut string: BitString = BitString::new();
 
         string.msb().push(One); // [1]
-        string.lsb().push(Zero); // 1[0]
-        string.msb().push(Zero); // [0]10
-        string.lsb().push(One); // 010[1]
+        string.lsb().push(0b10010011u8); // 1[10010011]
+        string.msb().push(&BitString::from(Zero)); // [0]110010011
+        string.lsb().push(Zero); // 0110010011[0]
+        string.msb().push(0b01101100u8); // [01101100]01100100110
+        string.lsb().push(&BitString::from(One)); // 0110110001100100110[1]
 
-        assert_eq!(string.len(), 4);
-        assert_eq!(string.get(0), Some(One));
-        assert_eq!(string.get(1), Some(Zero));
-        assert_eq!(string.get(2), Some(One));
-        assert_eq!(string.get(3), Some(Zero));
+        assert_eq!(string.len(), 20);
+        assert_eq!(
+            string.deref(),
+            &[
+                One, Zero, One, One, Zero, Zero, One, Zero, Zero, One, One, Zero, Zero, Zero, One,
+                One, Zero, One, One, Zero
+            ]
+        );
     }
 
     #[test]

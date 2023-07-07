@@ -68,7 +68,7 @@ impl<P: BitsPrimitive> CountedBits<P> {
         Self::with_count(P::ZERO, 0)
     }
 
-    fn with_count(bits: P, count: usize) -> Self {
+    pub(crate) fn with_count(bits: P, count: usize) -> Self {
         Self { bits, count }
     }
 
