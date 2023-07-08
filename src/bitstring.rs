@@ -81,6 +81,17 @@ impl<U: BitsPrimitive> BitString<U> {
     }
 
     #[inline]
+    fn from_primitives_iter_with_underlying_type<P: BitsPrimitive, T: IntoIterator<Item = P>>(
+        iter: T,
+    ) -> Self {
+        let mut bit_string = Self::new_with_underlying_type();
+        for primitive in iter {
+            bit_string.msb().push(primitive);
+        }
+        bit_string
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.bit_count
     }
@@ -165,6 +176,13 @@ impl FromIterator<BitValue> for BitString<usize> {
     #[inline]
     fn from_iter<T: IntoIterator<Item = BitValue>>(iter: T) -> Self {
         Self::from_bit_values_iter_with_underlying_type(iter)
+    }
+}
+
+impl<P: BitsPrimitive> FromIterator<P> for BitString<usize> {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = P>>(iter: T) -> Self {
+        Self::from_primitives_iter_with_underlying_type(iter)
     }
 }
 
@@ -520,6 +538,16 @@ mod tests {
 
         assert_eq!(bit_string.len(), 12);
         assert_eq!(bit_string.deref(), source);
+    }
+
+    #[test]
+    fn from_iter_primitives() {
+        let bits = [0b10010011u8, 0b01101100u8];
+
+        let bit_string = BitString::from_iter(bits.into_iter());
+
+        assert_eq!(bit_string.len(), 16);
+        assert_eq!(bit_string.deref(), BitStr::new_ref(&bits));
     }
 
     #[test]
