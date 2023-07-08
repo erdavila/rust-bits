@@ -7,7 +7,7 @@ use linear_deque::LinearDeque;
 use crate::copy_bits::copy_bits_raw;
 use crate::iter::BitIterator;
 use crate::refrepr::{RefRepr, TypedRefComponents};
-use crate::utils::{normalize_ptr_and_offset, required_elements_for_bit_count};
+use crate::utils::{normalize_ptr_and_offset, required_elements_for_bit_count, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone, Debug)]
@@ -43,6 +43,35 @@ impl<U: BitsPrimitive> BitString<U> {
         buffer.resize(buffer_elems, U::ZERO);
 
         unsafe { source.copy_bits_to(NonNull::from(buffer.deref()).cast::<U>(), 0) };
+
+        BitString {
+            buffer,
+            offset: 0,
+            bit_count,
+        }
+    }
+
+    #[inline]
+    fn from_bit_values_iter_with_underlying_type<T: IntoIterator<Item = BitValue>>(
+        iter: T,
+    ) -> Self {
+        let mut buffer = LinearDeque::new();
+        let mut primitive_bits = CountedBits::new();
+
+        for bit in iter.into_iter() {
+            primitive_bits.push_msb_value(bit);
+            if primitive_bits.is_full() {
+                buffer.push_back(primitive_bits.bits);
+                primitive_bits.clear();
+            }
+        }
+
+        let mut bit_count = buffer.len() * U::BIT_COUNT;
+
+        if primitive_bits.count > 0 {
+            bit_count += primitive_bits.count;
+            buffer.push_back(primitive_bits.bits);
+        }
 
         BitString {
             buffer,
@@ -129,6 +158,13 @@ impl<S: BitSource> From<S> for BitString<usize> {
     #[inline]
     fn from(value: S) -> Self {
         Self::from_with_underlying_type(value)
+    }
+}
+
+impl FromIterator<BitValue> for BitString<usize> {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = BitValue>>(iter: T) -> Self {
+        Self::from_bit_values_iter_with_underlying_type(iter)
     }
 }
 
@@ -474,6 +510,16 @@ mod tests {
         let string = BitString::from(&BitString::from(One));
         assert_eq!(string.len(), 1);
         assert_eq!(string[0].read(), One);
+    }
+
+    #[test]
+    fn from_iter_bit_values() {
+        let source = &BitString::from([0b10010011u8, 0b01101100u8])[2..14];
+
+        let bit_string = BitString::from_iter(source.iter());
+
+        assert_eq!(bit_string.len(), 12);
+        assert_eq!(bit_string.deref(), source);
     }
 
     #[test]
