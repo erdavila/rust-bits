@@ -1,8 +1,7 @@
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
-use std::ptr::NonNull;
 
-use crate::refrepr::{RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::refrepr::{RefRepr, TypedRefComponents, UntypedPointer, UntypedRefComponents};
 use crate::utils::normalize_ptr_and_offset;
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 use crate::{BitStr, BitsPrimitive, Primitive, PrimitiveAccessor};
@@ -45,7 +44,7 @@ pub trait BitIterator<'a>:
 }
 
 pub(crate) struct RawIter<'a> {
-    ptr: NonNull<()>,
+    ptr: UntypedPointer,
     underlying_primitive: BitsPrimitiveDiscriminant,
     start_offset: usize,
     end_offset: usize,
@@ -113,7 +112,7 @@ impl<'a> RawIter<'a> {
 }
 
 struct SelectOutputArgs {
-    ptr: NonNull<()>,
+    ptr: UntypedPointer,
     underlying_primitive: BitsPrimitiveDiscriminant,
     offset: usize,
     bit_count: usize,
@@ -290,7 +289,7 @@ impl<'a> FusedIterator for IterMut<'a> {}
 fn select_bit_value(args: SelectOutputArgs) -> BitValue {
     args.underlying_primitive.select({
         struct Selector {
-            ptr: NonNull<()>,
+            ptr: UntypedPointer,
             offset: usize,
         }
         impl BitsPrimitiveSelector for Selector {
@@ -298,7 +297,7 @@ fn select_bit_value(args: SelectOutputArgs) -> BitValue {
             #[inline]
             fn select<U: crate::BitsPrimitive>(self) -> Self::Output {
                 let (ptr, offset) =
-                    unsafe { normalize_ptr_and_offset(self.ptr.cast::<U>(), self.offset) };
+                    unsafe { normalize_ptr_and_offset(self.ptr.ptr().cast::<U>(), self.offset) };
                 let accessor = BitAccessor::new(ptr, offset);
                 accessor.get()
             }
@@ -314,7 +313,7 @@ fn select_bit_value(args: SelectOutputArgs) -> BitValue {
 fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
     args.underlying_primitive.select({
         struct Selector<P> {
-            ptr: NonNull<()>,
+            ptr: UntypedPointer,
             offset: usize,
             phantom: PhantomData<P>,
         }
@@ -322,7 +321,7 @@ fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
             type Output = P;
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, U>::new(self.ptr.cast(), self.offset);
+                let accessor = PrimitiveAccessor::<P, U>::new(self.ptr.ptr().cast(), self.offset);
                 accessor.get()
             }
         }
@@ -338,7 +337,7 @@ fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
 fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
     args.underlying_primitive.select({
         struct Selector {
-            ptr: NonNull<()>,
+            ptr: UntypedPointer,
             offset: usize,
             bit_count: usize,
         }
@@ -347,7 +346,7 @@ fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
                 let components = TypedRefComponents::new_normalized(
-                    self.ptr.cast::<U>(),
+                    self.ptr.ptr().cast::<U>(),
                     self.offset,
                     self.bit_count,
                 );

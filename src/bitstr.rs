@@ -522,7 +522,7 @@ mod tests {
 
                 assert_eq!(bit_str.len(), N * <$type>::BIT_COUNT);
                 let components = unsafe { std::mem::transmute::<_, RefRepr>(bit_str) }.decode();
-                assert_eq!(components.ptr, NonNull::from(&memory).cast());
+                assert_eq!(components.ptr.ptr(), NonNull::from(&memory).cast());
                 assert_eq!(
                     components.metadata.underlying_primitive,
                     <$type>::DISCRIMINANT

@@ -17,14 +17,14 @@ const ALL_DISCRIMINANTS: [BitsPrimitiveDiscriminant; 6] = [
 
 #[repr(C)]
 pub(crate) struct RefRepr {
-    ptr: NonNull<()>,
+    ptr: UntypedPointer,
     pub(crate) metadata: EncodedMetadata,
 }
 
 impl RefRepr {
     fn encode<U: BitsPrimitive>(components: TypedRefComponents<U>) -> Self {
         fn untyped_encode(
-            ptr: NonNull<()>,
+            ptr: UntypedPointer,
             metadata: Metadata,
             bit_counts: ComponentsBitCounts,
         ) -> RefRepr {
@@ -44,7 +44,7 @@ impl RefRepr {
             bit_count: components.bit_count,
         };
         let bit_counts = ComponentsBitCounts::new::<U>();
-        untyped_encode(components.ptr.cast(), metadata, bit_counts)
+        untyped_encode(components.ptr.cast().into(), metadata, bit_counts)
     }
 
     #[inline]
@@ -55,6 +55,29 @@ impl RefRepr {
         }
     }
 }
+
+mod untyped_pointer {
+    use std::ptr::NonNull;
+
+    #[repr(transparent)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(crate) struct UntypedPointer(NonNull<()>);
+
+    impl UntypedPointer {
+        #[inline]
+        pub(crate) fn ptr(&self) -> NonNull<()> {
+            self.0
+        }
+    }
+
+    impl From<NonNull<()>> for UntypedPointer {
+        #[inline]
+        fn from(ptr: NonNull<()>) -> Self {
+            UntypedPointer(ptr)
+        }
+    }
+}
+pub(crate) use untyped_pointer::*;
 
 #[repr(transparent)]
 pub(crate) struct EncodedMetadata(usize);
@@ -100,7 +123,7 @@ impl Metadata {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UntypedRefComponents {
-    pub(crate) ptr: NonNull<()>,
+    pub(crate) ptr: UntypedPointer,
     pub(crate) metadata: Metadata,
 }
 
@@ -118,7 +141,7 @@ impl UntypedRefComponents {
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
                 let components = TypedRefComponents {
-                    ptr: self.untyped_components.ptr.cast::<U>(),
+                    ptr: self.untyped_components.ptr.ptr().cast::<U>(),
                     offset: self.untyped_components.metadata.offset,
                     bit_count: self.untyped_components.metadata.bit_count,
                 };
@@ -330,7 +353,7 @@ mod tests {
                 let repr = original_components.encode();
                 let components = repr.decode();
 
-                assert_eq!(components.ptr, original_components.ptr.cast());
+                assert_eq!(components.ptr.ptr(), original_components.ptr.cast());
                 assert_eq!(
                     components.metadata.underlying_primitive,
                     <$type>::DISCRIMINANT
