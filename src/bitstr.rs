@@ -4,7 +4,6 @@ use std::ops::{
     Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
     RangeToInclusive,
 };
-use std::ptr::NonNull;
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
@@ -60,7 +59,7 @@ impl BitStr {
     #[inline]
     fn new_repr<U: BitsPrimitive>(under: &[U]) -> RefRepr {
         let components = TypedRefComponents {
-            ptr: NonNull::from(&under[0]),
+            ptr: under.into(),
             offset: 0,
             bit_count: under.len() * U::BIT_COUNT,
         };

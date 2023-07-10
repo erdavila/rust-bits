@@ -1,9 +1,7 @@
-use std::ptr::NonNull;
-
 use crate::bitsprimitive::BitsPrimitive;
 use crate::bitstr::BitStr;
 use crate::copy_bits::copy_bits_raw;
-use crate::refrepr::{RefComponentsSelector, TypedRefComponents};
+use crate::refrepr::{RefComponentsSelector, TypedPointer, TypedRefComponents};
 use crate::utils::{normalize_mut_ptr_and_offset, CountedBits};
 use crate::{BitString, BitValue};
 
@@ -13,7 +11,7 @@ pub trait BitSource {
     /// # Safety
     ///
     /// TODO
-    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize);
+    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize);
 }
 
 macro_rules! forward_methods_as_array {
@@ -24,7 +22,7 @@ macro_rules! forward_methods_as_array {
         }
 
         #[inline]
-        unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+        unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
             BitSource::copy_bits_to(&[*self], dst, offset);
         }
     };
@@ -38,7 +36,7 @@ macro_rules! forward_methods_as_ref {
         }
 
         #[inline]
-        unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+        unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
             BitSource::copy_bits_to(&self.as_ref(), dst, offset);
         }
     };
@@ -59,10 +57,10 @@ impl BitSource for &[BitValue] {
     }
 
     #[inline]
-    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
         let mut iter = self.iter().copied();
 
-        let (mut dst, offset) = normalize_mut_ptr_and_offset(dst.as_ptr(), offset);
+        let (mut dst, offset) = normalize_mut_ptr_and_offset(dst.as_mut_ptr(), offset);
 
         if offset != 0 {
             let mut primitive_bits = CountedBits::with_count(*dst, offset);
@@ -108,11 +106,11 @@ impl<P: BitsPrimitive> BitSource for &[P] {
     }
 
     #[inline]
-    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
         copy_bits_raw(
             *self as *const [P] as *const P,
             0,
-            dst.as_ptr(),
+            dst.as_mut_ptr(),
             offset,
             self.bit_count(),
         );
@@ -130,10 +128,10 @@ impl BitSource for &BitStr {
     }
 
     #[inline]
-    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: NonNull<D>, offset: usize) {
+    unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
         self.ref_components().select({
-            struct Selector<D> {
-                dst: NonNull<D>,
+            struct Selector<D: BitsPrimitive> {
+                dst: TypedPointer<D>,
                 offset: usize,
             }
             impl<D: BitsPrimitive> RefComponentsSelector for Selector<D> {
@@ -148,7 +146,7 @@ impl BitSource for &BitStr {
                         copy_bits_raw(
                             components.ptr.as_ptr(),
                             components.offset,
-                            self.dst.as_ptr(),
+                            self.dst.as_mut_ptr(),
                             self.offset,
                             components.bit_count,
                         )

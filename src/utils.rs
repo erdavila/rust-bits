@@ -1,7 +1,7 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
-use std::ptr::NonNull;
 use std::{cmp, mem};
 
+use crate::refrepr::TypedPointer;
 use crate::{BitValue, BitsPrimitive};
 
 // The number of bits required to represent a number of values.
@@ -50,11 +50,11 @@ pub(crate) unsafe fn normalize_mut_ptr_and_offset<P: BitsPrimitive>(
 
 #[inline]
 pub(crate) unsafe fn normalize_ptr_and_offset<P: BitsPrimitive>(
-    ptr: NonNull<P>,
+    ptr: TypedPointer<P>,
     offset: usize,
-) -> (NonNull<P>, usize) {
-    let (ptr, offset) = normalize_mut_ptr_and_offset(ptr.as_ptr(), offset);
-    (NonNull::new_unchecked(ptr), offset)
+) -> (TypedPointer<P>, usize) {
+    let (ptr, offset) = normalize_mut_ptr_and_offset(ptr.as_mut_ptr(), offset);
+    (ptr.into(), offset)
 }
 
 #[derive(Clone, Copy, Default)]

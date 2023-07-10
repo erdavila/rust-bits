@@ -1,9 +1,10 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::ptr::NonNull;
 
 use crate::copy_bits::copy_bits_raw;
-use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::refrepr::{
+    RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
+};
 use crate::{BitStr, BitsPrimitive};
 
 #[repr(C)]
@@ -92,14 +93,14 @@ impl<P: BitsPrimitive> Primitive<P> {
 }
 
 pub(crate) struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
-    ptr: NonNull<U>,
+    ptr: TypedPointer<U>,
     offset: usize,
     phantom: PhantomData<P>,
 }
 
 impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
-    pub(crate) fn new(ptr: NonNull<U>, offset: usize) -> Self {
+    pub(crate) fn new(ptr: TypedPointer<U>, offset: usize) -> Self {
         PrimitiveAccessor {
             ptr,
             offset,
@@ -119,7 +120,7 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
     fn set(&mut self, value: P) {
         unsafe {
-            copy_bits_raw(&value, 0, self.ptr.as_ptr(), self.offset, P::BIT_COUNT);
+            copy_bits_raw(&value, 0, self.ptr.as_mut_ptr(), self.offset, P::BIT_COUNT);
         }
     }
 }
@@ -162,7 +163,6 @@ impl<P: BitsPrimitive> AsMut<BitStr> for Primitive<P> {
 #[cfg(test)]
 mod tests {
     use std::ops::Not;
-    use std::ptr::NonNull;
 
     use crate::refrepr::{RefRepr, TypedRefComponents};
     use crate::{BitStr, BitsPrimitive, Primitive};
@@ -181,8 +181,7 @@ mod tests {
     }
 
     fn repr<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> RefRepr {
-        let components =
-            TypedRefComponents::new_normalized(NonNull::from(under), offset, P::BIT_COUNT);
+        let components = TypedRefComponents::new_normalized(under.into(), offset, P::BIT_COUNT);
         components.encode()
     }
 

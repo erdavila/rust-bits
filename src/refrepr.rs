@@ -1,5 +1,3 @@
-use std::ptr::NonNull;
-
 use crate::utils::{
     max_value_for_bit_count, normalize_ptr_and_offset, values_count_to_bit_count, BitPattern,
 };
@@ -44,7 +42,7 @@ impl RefRepr {
             bit_count: components.bit_count,
         };
         let bit_counts = ComponentsBitCounts::new::<U>();
-        untyped_encode(components.ptr.cast().into(), metadata, bit_counts)
+        untyped_encode(components.ptr.as_untyped(), metadata, bit_counts)
     }
 
     #[inline]
@@ -59,6 +57,10 @@ impl RefRepr {
 mod untyped_pointer {
     use std::ptr::NonNull;
 
+    use crate::BitsPrimitive;
+
+    use super::TypedPointer;
+
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub(crate) struct UntypedPointer(NonNull<()>);
@@ -67,6 +69,11 @@ mod untyped_pointer {
         #[inline]
         pub(crate) fn ptr(&self) -> NonNull<()> {
             self.0
+        }
+
+        #[inline]
+        pub(crate) fn as_typed<P: BitsPrimitive>(&self) -> TypedPointer<P> {
+            (*self).into()
         }
     }
 
@@ -78,6 +85,73 @@ mod untyped_pointer {
     }
 }
 pub(crate) use untyped_pointer::*;
+
+mod typed_pointer {
+    use std::ptr::NonNull;
+
+    use crate::BitsPrimitive;
+
+    use super::UntypedPointer;
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct TypedPointer<P: BitsPrimitive>(NonNull<P>);
+
+    impl<P: BitsPrimitive> TypedPointer<P> {
+        #[inline]
+        pub(crate) fn as_untyped(self) -> UntypedPointer {
+            self.0.cast().into()
+        }
+
+        #[inline]
+        pub(crate) unsafe fn read(self) -> P {
+            self.0.as_ptr().read()
+        }
+
+        #[inline]
+        pub(crate) fn as_ptr(self) -> *const P {
+            self.0.as_ptr()
+        }
+
+        #[inline]
+        pub(crate) fn as_mut_ptr(self) -> *mut P {
+            self.0.as_ptr()
+        }
+
+        #[inline]
+        pub(crate) unsafe fn as_mut(&mut self) -> &mut P {
+            self.0.as_mut()
+        }
+    }
+
+    impl<P: BitsPrimitive> From<UntypedPointer> for TypedPointer<P> {
+        #[inline]
+        fn from(ptr: UntypedPointer) -> Self {
+            TypedPointer(ptr.ptr().cast())
+        }
+    }
+
+    impl<P: BitsPrimitive> From<&P> for TypedPointer<P> {
+        #[inline]
+        fn from(value: &P) -> Self {
+            TypedPointer(NonNull::from(value))
+        }
+    }
+
+    impl<P: BitsPrimitive> From<&[P]> for TypedPointer<P> {
+        #[inline]
+        fn from(value: &[P]) -> Self {
+            TypedPointer(NonNull::from(value).cast())
+        }
+    }
+
+    impl<P: BitsPrimitive> From<*mut P> for TypedPointer<P> {
+        #[inline]
+        fn from(ptr: *mut P) -> Self {
+            TypedPointer(unsafe { NonNull::new_unchecked(ptr) })
+        }
+    }
+}
+pub(crate) use typed_pointer::*;
 
 #[repr(transparent)]
 pub(crate) struct EncodedMetadata(usize);
@@ -141,7 +215,7 @@ impl UntypedRefComponents {
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
                 let components = TypedRefComponents {
-                    ptr: self.untyped_components.ptr.ptr().cast::<U>(),
+                    ptr: self.untyped_components.ptr.as_typed::<U>(),
                     offset: self.untyped_components.metadata.offset,
                     bit_count: self.untyped_components.metadata.bit_count,
                 };
@@ -164,14 +238,14 @@ pub(crate) trait RefComponentsSelector {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
-    pub(crate) ptr: NonNull<P>,
+    pub(crate) ptr: TypedPointer<P>,
     pub(crate) offset: usize,
     pub(crate) bit_count: usize,
 }
 
 impl<P: BitsPrimitive> TypedRefComponents<P> {
     #[inline]
-    pub(crate) fn new_normalized(ptr: NonNull<P>, offset: usize, bit_count: usize) -> Self {
+    pub(crate) fn new_normalized(ptr: TypedPointer<P>, offset: usize, bit_count: usize) -> Self {
         let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, offset) };
         TypedRefComponents {
             ptr,
@@ -270,7 +344,6 @@ fn decode_discriminant(bits: usize) -> BitsPrimitiveDiscriminant {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::ptr::NonNull;
 
     use crate::refrepr::{
         encode_discriminant, EncodedMetadata, TypedRefComponents, DISCRIMINANT_BIT_COUNT,
@@ -345,7 +418,7 @@ mod tests {
         macro_rules! assert_conversions {
             ($type:ty, $under:ident, $offset:expr, $bit_count:expr) => {
                 let original_components = TypedRefComponents {
-                    ptr: NonNull::from(&$under[0]),
+                    ptr: $under.into(),
                     offset: $offset,
                     bit_count: $bit_count,
                 };
@@ -353,7 +426,7 @@ mod tests {
                 let repr = original_components.encode();
                 let components = repr.decode();
 
-                assert_eq!(components.ptr.ptr(), original_components.ptr.cast());
+                assert_eq!(components.ptr, original_components.ptr.as_untyped());
                 assert_eq!(
                     components.metadata.underlying_primitive,
                     <$type>::DISCRIMINANT
@@ -436,7 +509,7 @@ mod tests {
                 let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
 
                 let components = TypedRefComponents {
-                    ptr: NonNull::from(&under),
+                    ptr: (&under).into(),
                     offset: 0,
                     bit_count: max_bit_count + 1,
                 };
@@ -459,7 +532,7 @@ mod tests {
             ($type:ty, $offset:expr, $expected_index:expr, $expected_offset:expr) => {
                 let mut memory = [<$type>::ZERO, <$type>::ZERO, <$type>::ZERO];
                 let under = &mut memory;
-                let ptr = NonNull::from(&under[0]);
+                let ptr = under.as_ref().into();
 
                 let components = TypedRefComponents::new_normalized(ptr, $offset, 1);
 

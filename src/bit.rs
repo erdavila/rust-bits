@@ -1,9 +1,10 @@
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
-use std::ptr::NonNull;
 
 use crate::bitvalue::BitValue;
-use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::refrepr::{
+    RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
+};
 use crate::{BitStr, BitsPrimitive};
 
 /// Representation of a reference to a single bit in a [underlying memory].
@@ -111,13 +112,13 @@ impl Bit {
 }
 
 pub(crate) struct BitAccessor<P: BitsPrimitive> {
-    ptr: NonNull<P>,
+    ptr: TypedPointer<P>,
     mask: P,
 }
 
 impl<P: BitsPrimitive> BitAccessor<P> {
     #[inline]
-    pub(crate) fn new(ptr: NonNull<P>, bit_index: usize) -> Self {
+    pub(crate) fn new(ptr: TypedPointer<P>, bit_index: usize) -> Self {
         BitAccessor {
             ptr,
             mask: P::ONE << bit_index,
@@ -126,7 +127,7 @@ impl<P: BitsPrimitive> BitAccessor<P> {
 
     #[inline]
     pub(crate) fn get(&self) -> BitValue {
-        BitValue::from((unsafe { *self.ptr.as_ref() } & self.mask) != P::ZERO)
+        BitValue::from((unsafe { self.ptr.read() } & self.mask) != P::ZERO)
     }
 
     #[inline]
@@ -208,7 +209,6 @@ mod tests {
     use std::convert::identity;
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
-    use std::ptr::NonNull;
 
     use crate::refrepr::{RefRepr, TypedRefComponents};
     use crate::BitValue::{One, Zero};
@@ -226,7 +226,7 @@ mod tests {
 
     fn repr<U: BitsPrimitive>(under: &U, bit_index: usize) -> RefRepr {
         let components = TypedRefComponents {
-            ptr: NonNull::from(under),
+            ptr: under.into(),
             offset: bit_index,
             bit_count: 1,
         };

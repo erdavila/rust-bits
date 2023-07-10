@@ -297,7 +297,7 @@ fn select_bit_value(args: SelectOutputArgs) -> BitValue {
             #[inline]
             fn select<U: crate::BitsPrimitive>(self) -> Self::Output {
                 let (ptr, offset) =
-                    unsafe { normalize_ptr_and_offset(self.ptr.ptr().cast::<U>(), self.offset) };
+                    unsafe { normalize_ptr_and_offset(self.ptr.as_typed::<U>(), self.offset) };
                 let accessor = BitAccessor::new(ptr, offset);
                 accessor.get()
             }
@@ -321,7 +321,7 @@ fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
             type Output = P;
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, U>::new(self.ptr.ptr().cast(), self.offset);
+                let accessor = PrimitiveAccessor::<P, U>::new(self.ptr.as_typed(), self.offset);
                 accessor.get()
             }
         }
@@ -346,7 +346,7 @@ fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
                 let components = TypedRefComponents::new_normalized(
-                    self.ptr.ptr().cast::<U>(),
+                    self.ptr.as_typed::<U>(),
                     self.offset,
                     self.bit_count,
                 );
