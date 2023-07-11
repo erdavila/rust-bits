@@ -2,7 +2,7 @@ use crate::bitsprimitive::BitsPrimitive;
 use crate::bitstr::BitStr;
 use crate::copy_bits::copy_bits_raw;
 use crate::refrepr::{RefComponentsSelector, TypedPointer, TypedRefComponents};
-use crate::utils::{normalize_mut_ptr_and_offset, CountedBits};
+use crate::utils::{normalize_ptr_and_offset, CountedBits};
 use crate::{BitString, BitValue};
 
 pub trait BitSource {
@@ -60,17 +60,17 @@ impl BitSource for &[BitValue] {
     unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
         let mut iter = self.iter().copied();
 
-        let (mut dst, offset) = normalize_mut_ptr_and_offset(dst.as_mut_ptr(), offset);
+        let (mut dst, offset) = normalize_ptr_and_offset(dst, offset);
 
         if offset.value() != 0 {
-            let mut primitive_bits = CountedBits::with_count(*dst, offset.value());
+            let mut primitive_bits = CountedBits::with_count(dst.read(), offset.value());
             for bit in iter.by_ref() {
                 primitive_bits.push_msb_value(bit);
                 if primitive_bits.is_full() {
                     break;
                 }
             }
-            *dst = primitive_bits.bits;
+            dst.write(primitive_bits.bits);
             dst = dst.add(1)
         }
 
@@ -79,14 +79,14 @@ impl BitSource for &[BitValue] {
         for bit in iter {
             primitive_bits.push_msb_value(bit);
             if primitive_bits.count == D::BIT_COUNT {
-                *dst = primitive_bits.bits;
+                dst.write(primitive_bits.bits);
                 dst = dst.add(1);
                 primitive_bits.clear();
             }
         }
 
         if primitive_bits.count > 0 {
-            *dst = primitive_bits.bits;
+            dst.write(primitive_bits.bits);
         }
     }
 }

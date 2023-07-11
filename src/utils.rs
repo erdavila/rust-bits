@@ -29,32 +29,14 @@ pub(crate) fn required_elements_for_bit_count<P: BitsPrimitive>(bit_count: usize
 }
 
 #[inline]
-pub(crate) unsafe fn normalize_const_ptr_and_offset<P: BitsPrimitive>(
-    ptr: *const P,
-    offset: usize,
-) -> (*const P, Offset<P>) {
-    let index = offset / P::BIT_COUNT;
-    let offset = Offset::new(offset);
-    let ptr = ptr.add(index);
-    (ptr, offset)
-}
-
-#[inline]
-pub(crate) unsafe fn normalize_mut_ptr_and_offset<P: BitsPrimitive>(
-    ptr: *mut P,
-    offset: usize,
-) -> (*mut P, Offset<P>) {
-    let (ptr, offset) = normalize_const_ptr_and_offset(ptr as _, offset);
-    (ptr as _, offset)
-}
-
-#[inline]
 pub(crate) unsafe fn normalize_ptr_and_offset<P: BitsPrimitive>(
     ptr: TypedPointer<P>,
     offset: usize,
 ) -> (TypedPointer<P>, Offset<P>) {
-    let (ptr, offset) = normalize_mut_ptr_and_offset(ptr.as_mut_ptr(), offset);
-    (ptr.into(), offset)
+    let index = offset / P::BIT_COUNT;
+    let offset = Offset::new(offset);
+    let ptr = ptr.add(index);
+    (ptr, offset)
 }
 
 #[derive(Clone, Copy, Default)]

@@ -1,9 +1,7 @@
 use std::cmp;
 
-use crate::refrepr::Offset;
-use crate::utils::{
-    normalize_const_ptr_and_offset, normalize_mut_ptr_and_offset, BitPattern, CountedBits,
-};
+use crate::refrepr::{Offset, TypedPointer};
+use crate::utils::{normalize_ptr_and_offset, BitPattern, CountedBits};
 use crate::BitsPrimitive;
 
 /// Copies bits.
@@ -91,13 +89,13 @@ fn validate_range<P: BitsPrimitive>(data: &[P], offset: usize, bit_count: usize)
 }
 
 struct Source<P: BitsPrimitive> {
-    ptr: *const P,
+    ptr: TypedPointer<P>,
     buffer: CountedBits<P>,
 }
 
 impl<P: BitsPrimitive> Source<P> {
     pub fn new(ptr: *const P, offset: usize) -> Self {
-        let (ptr, offset) = unsafe { normalize_const_ptr_and_offset(ptr, offset) };
+        let (ptr, offset) = unsafe { normalize_ptr_and_offset((ptr as *mut P).into(), offset) };
         let mut buffer = CountedBits::from(unsafe { ptr.read() });
         buffer.drop_lsb(offset.value());
 
@@ -119,14 +117,14 @@ impl<P: BitsPrimitive> Source<P> {
 }
 
 struct Destination<P: BitsPrimitive> {
-    ptr: *mut P,
+    ptr: TypedPointer<P>,
     offset: Offset<P>,
     buffer: CountedBits<P>,
 }
 
 impl<P: BitsPrimitive> Destination<P> {
     pub fn new(ptr: *mut P, offset: usize) -> Self {
-        let (ptr, offset) = unsafe { normalize_mut_ptr_and_offset(ptr, offset) };
+        let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr.into(), offset) };
         Destination {
             ptr,
             offset,

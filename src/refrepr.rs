@@ -108,6 +108,16 @@ mod typed_pointer {
         }
 
         #[inline]
+        pub(crate) unsafe fn write(self, value: P) {
+            self.0.as_ptr().write(value);
+        }
+
+        #[inline]
+        pub(crate) unsafe fn add(self, count: usize) -> Self {
+            Self::from(self.0.as_ptr().add(count))
+        }
+
+        #[inline]
         pub(crate) fn as_ptr(self) -> *const P {
             self.0.as_ptr()
         }
