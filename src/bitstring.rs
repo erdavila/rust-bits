@@ -5,14 +5,14 @@ use linear_deque::LinearDeque;
 
 use crate::copy_bits::copy_bits_raw;
 use crate::iter::BitIterator;
-use crate::refrepr::{RefRepr, TypedPointer, TypedRefComponents};
+use crate::refrepr::{Offset, RefRepr, TypedPointer, TypedRefComponents};
 use crate::utils::{normalize_ptr_and_offset, required_elements_for_bit_count, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone, Debug)]
 pub struct BitString<U: BitsPrimitive = usize> {
     buffer: LinearDeque<U>,
-    offset: usize,
+    offset: Offset<U>,
     bit_count: usize,
 }
 
@@ -28,7 +28,7 @@ impl<U: BitsPrimitive> BitString<U> {
     pub fn new_with_underlying_type() -> Self {
         BitString {
             buffer: LinearDeque::new(),
-            offset: 0,
+            offset: Offset::new(0),
             bit_count: 0,
         }
     }
@@ -45,7 +45,7 @@ impl<U: BitsPrimitive> BitString<U> {
 
         BitString {
             buffer,
-            offset: 0,
+            offset: Offset::new(0),
             bit_count,
         }
     }
@@ -74,7 +74,7 @@ impl<U: BitsPrimitive> BitString<U> {
 
         BitString {
             buffer,
-            offset: 0,
+            offset: Offset::new(0),
             bit_count,
         }
     }
@@ -194,8 +194,8 @@ impl<U: BitsPrimitive> IntoIterator for BitString<U> {
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
             buffer: self.buffer,
-            start_offset: self.offset,
-            end_offset: self.offset + self.bit_count,
+            start_offset: self.offset.value(),
+            end_offset: self.offset.value() + self.bit_count,
         }
     }
 }
@@ -215,18 +215,20 @@ pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
 impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
     fn push<S: BitSource>(&mut self, source: S) {
         let pushed_bits_count = source.bit_count();
-        let space = self.0.offset;
+        let space = self.0.offset.value();
 
+        let mut updated_offset = self.0.offset.value();
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
             let additional_elems = required_elements_for_bit_count::<U>(additional_elems_bit_count);
             self.0
                 .buffer
                 .resize_at_front(self.0.buffer.len() + additional_elems, U::ZERO);
-            self.0.offset += additional_elems * U::BIT_COUNT;
+            updated_offset += additional_elems * U::BIT_COUNT;
         }
-        self.0.offset -= pushed_bits_count;
+        updated_offset -= pushed_bits_count;
 
-        unsafe { source.copy_bits_to(self.0.buffer.as_ref().into(), self.0.offset) };
+        self.0.offset = Offset::new(updated_offset);
+        unsafe { source.copy_bits_to(self.0.buffer.as_ref().into(), updated_offset) };
         self.0.bit_count += pushed_bits_count;
     }
 }
@@ -235,7 +237,7 @@ pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
 impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
     fn push<S: BitSource>(&mut self, source: S) {
         let pushed_bits_count = source.bit_count();
-        let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset - self.0.len();
+        let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset.value() - self.0.len();
 
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
             let additional_elems = required_elements_for_bit_count::<U>(additional_elems_bit_count);
@@ -247,7 +249,7 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
         unsafe {
             source.copy_bits_to(
                 self.0.buffer.as_ref().into(),
-                self.0.offset + self.0.bit_count,
+                self.0.offset.value() + self.0.bit_count,
             )
         };
         self.0.bit_count += pushed_bits_count;
@@ -313,7 +315,7 @@ impl<U: BitsPrimitive> IntoIter<U> {
         unsafe {
             copy_bits_raw(
                 params.ptr.as_ptr(),
-                params.offset,
+                params.offset.value(),
                 buffer.as_mut() as *mut [U] as *mut U,
                 0,
                 params.bit_count,
@@ -321,7 +323,7 @@ impl<U: BitsPrimitive> IntoIter<U> {
         }
         BitString {
             buffer,
-            offset: 0,
+            offset: Offset::new(0),
             bit_count: params.bit_count,
         }
     }
@@ -376,7 +378,7 @@ impl<U: BitsPrimitive> FusedIterator for IntoIter<U> {}
 
 struct IntoIterNextItemParams<U: BitsPrimitive> {
     ptr: TypedPointer<U>,
-    offset: usize,
+    offset: Offset<U>,
     bit_count: usize,
 }
 

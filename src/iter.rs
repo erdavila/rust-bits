@@ -321,7 +321,9 @@ fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
             type Output = P;
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, U>::new(self.ptr.as_typed(), self.offset);
+                let (ptr, offset) =
+                    unsafe { normalize_ptr_and_offset(self.ptr.as_typed(), self.offset) };
+                let accessor = PrimitiveAccessor::<P, U>::new(ptr, offset);
                 accessor.get()
             }
         }

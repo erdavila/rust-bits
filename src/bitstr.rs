@@ -6,7 +6,9 @@ use std::ops::{
 };
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
-use crate::refrepr::{RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents};
+use crate::refrepr::{
+    Offset, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
+};
 use crate::utils::CountedBits;
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
@@ -60,7 +62,7 @@ impl BitStr {
     fn new_repr<U: BitsPrimitive>(under: &[U]) -> RefRepr {
         let components = TypedRefComponents {
             ptr: under.into(),
-            offset: 0,
+            offset: Offset::new(0),
             bit_count: under.len() * U::BIT_COUNT,
         };
         components.encode()
@@ -251,12 +253,12 @@ impl BitStr {
                 ) -> Self::Output {
                     let lsb_components = TypedRefComponents::new_normalized(
                         components.ptr,
-                        components.offset,
+                        components.offset.value(),
                         self.0,
                     );
                     let msb_components = TypedRefComponents::new_normalized(
                         components.ptr,
-                        components.offset + self.0,
+                        components.offset.value() + self.0,
                         components.bit_count - self.0,
                     );
                     (msb_components.encode(), lsb_components.encode())
@@ -309,7 +311,7 @@ fn select_on_range<S: OnRangeSelector>(
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
                 let components = TypedRefComponents::new_normalized(
                     components.ptr,
-                    components.offset + self.range.start,
+                    components.offset.value() + self.range.start,
                     self.range.len(),
                 );
                 self.selector.select(components)

@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
 use crate::refrepr::{
-    RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
+    Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
 };
 use crate::{BitStr, BitsPrimitive};
 
@@ -118,10 +118,10 @@ pub(crate) struct BitAccessor<P: BitsPrimitive> {
 
 impl<P: BitsPrimitive> BitAccessor<P> {
     #[inline]
-    pub(crate) fn new(ptr: TypedPointer<P>, bit_index: usize) -> Self {
+    pub(crate) fn new(ptr: TypedPointer<P>, bit_index: Offset<P>) -> Self {
         BitAccessor {
             ptr,
-            mask: P::ONE << bit_index,
+            mask: P::ONE << bit_index.value(),
         }
     }
 
@@ -210,7 +210,7 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
-    use crate::refrepr::{RefRepr, TypedRefComponents};
+    use crate::refrepr::{Offset, RefRepr, TypedRefComponents};
     use crate::BitValue::{One, Zero};
     use crate::{Bit, BitStr, BitsPrimitive};
 
@@ -227,7 +227,7 @@ mod tests {
     fn repr<U: BitsPrimitive>(under: &U, bit_index: usize) -> RefRepr {
         let components = TypedRefComponents {
             ptr: under.into(),
-            offset: bit_index,
+            offset: Offset::new(bit_index),
             bit_count: 1,
         };
         components.encode()

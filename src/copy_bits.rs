@@ -1,5 +1,6 @@
 use std::cmp;
 
+use crate::refrepr::Offset;
 use crate::utils::{
     normalize_const_ptr_and_offset, normalize_mut_ptr_and_offset, BitPattern, CountedBits,
 };
@@ -98,7 +99,7 @@ impl<P: BitsPrimitive> Source<P> {
     pub fn new(ptr: *const P, offset: usize) -> Self {
         let (ptr, offset) = unsafe { normalize_const_ptr_and_offset(ptr, offset) };
         let mut buffer = CountedBits::from(unsafe { ptr.read() });
-        buffer.drop_lsb(offset);
+        buffer.drop_lsb(offset.value());
 
         Source { ptr, buffer }
     }
@@ -119,7 +120,7 @@ impl<P: BitsPrimitive> Source<P> {
 
 struct Destination<P: BitsPrimitive> {
     ptr: *mut P,
-    offset: usize,
+    offset: Offset<P>,
     buffer: CountedBits<P>,
 }
 
@@ -139,8 +140,8 @@ impl<P: BitsPrimitive> Destination<P> {
             let popped_bits = CountedBits::from_usize(popped_bits);
             self.buffer.push_msb(popped_bits);
 
-            if self.offset > 0 {
-                let bit_count_to_write = P::BIT_COUNT - self.offset;
+            if self.offset.value() > 0 {
+                let bit_count_to_write = P::BIT_COUNT - self.offset.value();
                 if self.buffer.count >= bit_count_to_write {
                     let bits_to_write = self.buffer.pop_lsb(bit_count_to_write);
                     debug_assert!(bits_to_write.count == bit_count_to_write);
@@ -172,12 +173,12 @@ impl<P: BitsPrimitive> Destination<P> {
         let mut elem_bits = unsafe { self.ptr.read() };
         elem_bits &= BitPattern::new_with_ones()
             .and_zeros(bits.count)
-            .and_ones(lsb_keep_bit_count)
+            .and_ones(lsb_keep_bit_count.value())
             .get();
-        elem_bits |= bits.bits << self.offset;
+        elem_bits |= bits.bits << self.offset.value();
         self.write_next_elem(elem_bits);
 
-        self.offset = 0;
+        self.offset = Offset::new(0);
     }
 }
 

@@ -38,7 +38,7 @@ impl RefRepr {
 
         let metadata = Metadata {
             underlying_primitive: U::DISCRIMINANT,
-            offset: components.offset,
+            offset: components.offset.value(),
             bit_count: components.bit_count,
         };
         let bit_counts = ComponentsBitCounts::new::<U>();
@@ -153,6 +153,34 @@ mod typed_pointer {
 }
 pub(crate) use typed_pointer::*;
 
+mod offset {
+    use std::marker::PhantomData;
+
+    use crate::BitsPrimitive;
+
+    #[derive(Clone, Copy, Debug)]
+    pub(crate) struct Offset<P: BitsPrimitive> {
+        value: usize,
+        phantom: PhantomData<P>,
+    }
+
+    impl<P: BitsPrimitive> Offset<P> {
+        #[inline]
+        pub(crate) fn new(value: usize) -> Self {
+            Offset {
+                value: value % P::BIT_COUNT,
+                phantom: PhantomData,
+            }
+        }
+
+        #[inline]
+        pub(crate) fn value(&self) -> usize {
+            self.value
+        }
+    }
+}
+pub(crate) use offset::*;
+
 #[repr(transparent)]
 pub(crate) struct EncodedMetadata(usize);
 
@@ -216,7 +244,7 @@ impl UntypedRefComponents {
             fn select<U: BitsPrimitive>(self) -> Self::Output {
                 let components = TypedRefComponents {
                     ptr: self.untyped_components.ptr.as_typed::<U>(),
-                    offset: self.untyped_components.metadata.offset,
+                    offset: Offset::new(self.untyped_components.metadata.offset),
                     bit_count: self.untyped_components.metadata.bit_count,
                 };
                 self.selector.select(components)
@@ -239,7 +267,7 @@ pub(crate) trait RefComponentsSelector {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
     pub(crate) ptr: TypedPointer<P>,
-    pub(crate) offset: usize,
+    pub(crate) offset: Offset<P>,
     pub(crate) bit_count: usize,
 }
 
@@ -346,7 +374,7 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::refrepr::{
-        encode_discriminant, EncodedMetadata, TypedRefComponents, DISCRIMINANT_BIT_COUNT,
+        encode_discriminant, EncodedMetadata, Offset, TypedRefComponents, DISCRIMINANT_BIT_COUNT,
     };
     use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
     use crate::BitsPrimitive;
@@ -419,7 +447,7 @@ mod tests {
             ($type:ty, $under:ident, $offset:expr, $bit_count:expr) => {
                 let original_components = TypedRefComponents {
                     ptr: $under.into(),
-                    offset: $offset,
+                    offset: Offset::new($offset),
                     bit_count: $bit_count,
                 };
 
@@ -431,7 +459,10 @@ mod tests {
                     components.metadata.underlying_primitive,
                     <$type>::DISCRIMINANT
                 );
-                assert_eq!(components.metadata.offset, original_components.offset);
+                assert_eq!(
+                    components.metadata.offset,
+                    original_components.offset.value()
+                );
                 assert_eq!(components.metadata.bit_count, original_components.bit_count);
             };
         }
@@ -510,7 +541,7 @@ mod tests {
 
                 let components = TypedRefComponents {
                     ptr: (&under).into(),
-                    offset: 0,
+                    offset: Offset::new(0),
                     bit_count: max_bit_count + 1,
                 };
 
@@ -540,7 +571,7 @@ mod tests {
                     components.ptr.as_ptr(),
                     unsafe { ptr.as_ptr().add($expected_index) }.cast()
                 );
-                assert_eq!(components.offset, $expected_offset);
+                assert_eq!(components.offset.value(), $expected_offset);
             };
         }
 

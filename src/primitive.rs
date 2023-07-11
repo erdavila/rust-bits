@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use crate::copy_bits::copy_bits_raw;
 use crate::refrepr::{
-    RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
+    Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
 };
 use crate::{BitStr, BitsPrimitive};
 
@@ -94,13 +94,13 @@ impl<P: BitsPrimitive> Primitive<P> {
 
 pub(crate) struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
     ptr: TypedPointer<U>,
-    offset: usize,
+    offset: Offset<U>,
     phantom: PhantomData<P>,
 }
 
 impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
-    pub(crate) fn new(ptr: TypedPointer<U>, offset: usize) -> Self {
+    pub(crate) fn new(ptr: TypedPointer<U>, offset: Offset<U>) -> Self {
         PrimitiveAccessor {
             ptr,
             offset,
@@ -112,7 +112,13 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     pub(crate) fn get(&self) -> P {
         let mut value = P::ZERO;
         unsafe {
-            copy_bits_raw(self.ptr.as_ptr(), self.offset, &mut value, 0, P::BIT_COUNT);
+            copy_bits_raw(
+                self.ptr.as_ptr(),
+                self.offset.value(),
+                &mut value,
+                0,
+                P::BIT_COUNT,
+            );
         }
         value
     }
@@ -120,7 +126,13 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
     fn set(&mut self, value: P) {
         unsafe {
-            copy_bits_raw(&value, 0, self.ptr.as_mut_ptr(), self.offset, P::BIT_COUNT);
+            copy_bits_raw(
+                &value,
+                0,
+                self.ptr.as_mut_ptr(),
+                self.offset.value(),
+                P::BIT_COUNT,
+            );
         }
     }
 }

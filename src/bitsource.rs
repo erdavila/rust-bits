@@ -62,8 +62,8 @@ impl BitSource for &[BitValue] {
 
         let (mut dst, offset) = normalize_mut_ptr_and_offset(dst.as_mut_ptr(), offset);
 
-        if offset != 0 {
-            let mut primitive_bits = CountedBits::with_count(*dst, offset);
+        if offset.value() != 0 {
+            let mut primitive_bits = CountedBits::with_count(*dst, offset.value());
             for bit in iter.by_ref() {
                 primitive_bits.push_msb_value(bit);
                 if primitive_bits.is_full() {
@@ -145,7 +145,7 @@ impl BitSource for &BitStr {
                     unsafe {
                         copy_bits_raw(
                             components.ptr.as_ptr(),
-                            components.offset,
+                            components.offset.value(),
                             self.dst.as_mut_ptr(),
                             self.offset,
                             components.bit_count,

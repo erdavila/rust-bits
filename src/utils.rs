@@ -1,7 +1,7 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
 use std::{cmp, mem};
 
-use crate::refrepr::TypedPointer;
+use crate::refrepr::{Offset, TypedPointer};
 use crate::{BitValue, BitsPrimitive};
 
 // The number of bits required to represent a number of values.
@@ -32,9 +32,9 @@ pub(crate) fn required_elements_for_bit_count<P: BitsPrimitive>(bit_count: usize
 pub(crate) unsafe fn normalize_const_ptr_and_offset<P: BitsPrimitive>(
     ptr: *const P,
     offset: usize,
-) -> (*const P, usize) {
+) -> (*const P, Offset<P>) {
     let index = offset / P::BIT_COUNT;
-    let offset = offset % P::BIT_COUNT;
+    let offset = Offset::new(offset);
     let ptr = ptr.add(index);
     (ptr, offset)
 }
@@ -43,7 +43,7 @@ pub(crate) unsafe fn normalize_const_ptr_and_offset<P: BitsPrimitive>(
 pub(crate) unsafe fn normalize_mut_ptr_and_offset<P: BitsPrimitive>(
     ptr: *mut P,
     offset: usize,
-) -> (*mut P, usize) {
+) -> (*mut P, Offset<P>) {
     let (ptr, offset) = normalize_const_ptr_and_offset(ptr as _, offset);
     (ptr as _, offset)
 }
@@ -52,7 +52,7 @@ pub(crate) unsafe fn normalize_mut_ptr_and_offset<P: BitsPrimitive>(
 pub(crate) unsafe fn normalize_ptr_and_offset<P: BitsPrimitive>(
     ptr: TypedPointer<P>,
     offset: usize,
-) -> (TypedPointer<P>, usize) {
+) -> (TypedPointer<P>, Offset<P>) {
     let (ptr, offset) = normalize_mut_ptr_and_offset(ptr.as_mut_ptr(), offset);
     (ptr.into(), offset)
 }
