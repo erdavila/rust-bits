@@ -1,8 +1,8 @@
 use crate::bitsprimitive::BitsPrimitive;
 use crate::bitstr::BitStr;
-use crate::copy_bits::copy_bits_raw;
-use crate::refrepr::{RefComponentsSelector, TypedPointer, TypedRefComponents};
-use crate::utils::{normalize_ptr_and_offset, CountedBits};
+use crate::copy_bits::copy_bits_ptr;
+use crate::refrepr::{BitPointer, Offset, RefComponentsSelector, TypedPointer, TypedRefComponents};
+use crate::utils::CountedBits;
 use crate::{BitString, BitValue};
 
 pub trait BitSource {
@@ -60,10 +60,13 @@ impl BitSource for &[BitValue] {
     unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
         let mut iter = self.iter().copied();
 
-        let (mut dst, offset) = normalize_ptr_and_offset(dst, offset);
+        let (mut dst, offset) = {
+            let bit_ptr = BitPointer::new_normalized(dst, offset);
+            (bit_ptr.elem_ptr(), bit_ptr.offset().value())
+        };
 
-        if offset.value() != 0 {
-            let mut primitive_bits = CountedBits::with_count(dst.read(), offset.value());
+        if offset != 0 {
+            let mut primitive_bits = CountedBits::with_count(dst.read(), offset);
             for bit in iter.by_ref() {
                 primitive_bits.push_msb_value(bit);
                 if primitive_bits.is_full() {
@@ -107,13 +110,9 @@ impl<P: BitsPrimitive> BitSource for &[P] {
 
     #[inline]
     unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
-        copy_bits_raw(
-            *self as *const [P] as *const P,
-            0,
-            dst.as_mut_ptr(),
-            offset,
-            self.bit_count(),
-        );
+        let src = BitPointer::new((*self).into(), Offset::new(0));
+        let dst = BitPointer::new_normalized(dst, offset);
+        copy_bits_ptr(src, dst, self.bit_count());
     }
 }
 
@@ -130,10 +129,7 @@ impl BitSource for &BitStr {
     #[inline]
     unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
         self.ref_components().select({
-            struct Selector<D: BitsPrimitive> {
-                dst: TypedPointer<D>,
-                offset: usize,
-            }
+            struct Selector<D: BitsPrimitive>(BitPointer<D>);
             impl<D: BitsPrimitive> RefComponentsSelector for Selector<D> {
                 type Output = ();
 
@@ -142,19 +138,15 @@ impl BitSource for &BitStr {
                     self,
                     components: TypedRefComponents<U>,
                 ) -> Self::Output {
+                    let src = components.bit_ptr;
+                    let dst = self.0;
                     unsafe {
-                        copy_bits_raw(
-                            components.ptr.as_ptr(),
-                            components.offset.value(),
-                            self.dst.as_mut_ptr(),
-                            self.offset,
-                            components.bit_count,
-                        )
+                        copy_bits_ptr(src, dst, components.bit_count);
                     };
                 }
             }
 
-            Selector { dst, offset }
+            Selector(BitPointer::new_normalized(dst, offset))
         })
     }
 }

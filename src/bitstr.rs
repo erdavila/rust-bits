@@ -7,7 +7,7 @@ use std::ops::{
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::refrepr::{
-    Offset, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
+    BitPointer, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
 };
 use crate::utils::CountedBits;
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
@@ -61,8 +61,7 @@ impl BitStr {
     #[inline]
     fn new_repr<U: BitsPrimitive>(under: &[U]) -> RefRepr {
         let components = TypedRefComponents {
-            ptr: under.into(),
-            offset: Offset::new(0),
+            bit_ptr: BitPointer::new_normalized(under.into(), 0),
             bit_count: under.len() * U::BIT_COUNT,
         };
         components.encode()
@@ -94,8 +93,7 @@ impl BitStr {
                 self,
                 range_ref_components: TypedRefComponents<U>,
             ) -> Self::Output {
-                let accessor =
-                    BitAccessor::new(range_ref_components.ptr, range_ref_components.offset);
+                let accessor = BitAccessor::new(range_ref_components.bit_ptr);
                 accessor.get()
             }
         }
@@ -154,10 +152,7 @@ impl BitStr {
                 self,
                 range_ref_components: TypedRefComponents<U>,
             ) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, U>::new(
-                    range_ref_components.ptr,
-                    range_ref_components.offset,
-                );
+                let accessor = PrimitiveAccessor::<P, U>::new(range_ref_components.bit_ptr);
                 accessor.get()
             }
         }
@@ -251,16 +246,14 @@ impl BitStr {
                     self,
                     components: TypedRefComponents<U>,
                 ) -> Self::Output {
-                    let lsb_components = TypedRefComponents::new_normalized(
-                        components.ptr,
-                        components.offset.value(),
-                        self.0,
-                    );
-                    let msb_components = TypedRefComponents::new_normalized(
-                        components.ptr,
-                        components.offset.value() + self.0,
-                        components.bit_count - self.0,
-                    );
+                    let lsb_components = TypedRefComponents {
+                        bit_ptr: components.bit_ptr,
+                        bit_count: self.0,
+                    };
+                    let msb_components = TypedRefComponents {
+                        bit_ptr: components.bit_ptr.add_offset(self.0),
+                        bit_count: components.bit_count - self.0,
+                    };
                     (msb_components.encode(), lsb_components.encode())
                 }
             }
@@ -309,11 +302,10 @@ fn select_on_range<S: OnRangeSelector>(
 
             #[inline]
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let components = TypedRefComponents::new_normalized(
-                    components.ptr,
-                    components.offset.value() + self.range.start,
-                    self.range.len(),
-                );
+                let components = TypedRefComponents {
+                    bit_ptr: components.bit_ptr.add_offset(self.range.start),
+                    bit_count: self.range.len(),
+                };
                 self.selector.select(components)
             }
         }

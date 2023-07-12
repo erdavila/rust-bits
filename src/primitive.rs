@@ -1,9 +1,9 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use crate::copy_bits::copy_bits_raw;
+use crate::copy_bits::copy_bits_ptr;
 use crate::refrepr::{
-    Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
+    BitPointer, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
 };
 use crate::{BitStr, BitsPrimitive};
 
@@ -22,7 +22,7 @@ impl<P: BitsPrimitive> Primitive<P> {
             type Output = P;
             #[inline]
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, _>::new(components.ptr, components.offset);
+                let accessor = PrimitiveAccessor::<P, _>::new(components.bit_ptr);
                 accessor.get()
             }
         }
@@ -39,8 +39,7 @@ impl<P: BitsPrimitive> Primitive<P> {
             type Output = P;
             #[inline]
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor =
-                    PrimitiveAccessor::<P, _>::new(components.ptr, components.offset);
+                let mut accessor = PrimitiveAccessor::<P, _>::new(components.bit_ptr);
                 let previous_value = accessor.get();
                 accessor.set(self.value);
                 previous_value
@@ -59,8 +58,7 @@ impl<P: BitsPrimitive> Primitive<P> {
         impl<P: BitsPrimitive, F: FnOnce(P) -> P> RefComponentsSelector for Selector<P, F> {
             type Output = ();
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor =
-                    PrimitiveAccessor::<P, _>::new(components.ptr, components.offset);
+                let mut accessor = PrimitiveAccessor::<P, _>::new(components.bit_ptr);
                 let previous_value = accessor.get();
                 let new_value = (self.f)(previous_value);
                 accessor.set(new_value);
@@ -93,17 +91,15 @@ impl<P: BitsPrimitive> Primitive<P> {
 }
 
 pub(crate) struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
-    ptr: TypedPointer<U>,
-    offset: Offset<U>,
+    bit_ptr: BitPointer<U>,
     phantom: PhantomData<P>,
 }
 
 impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
-    pub(crate) fn new(ptr: TypedPointer<U>, offset: Offset<U>) -> Self {
+    pub(crate) fn new(bit_ptr: BitPointer<U>) -> Self {
         PrimitiveAccessor {
-            ptr,
-            offset,
+            bit_ptr,
             phantom: PhantomData,
         }
     }
@@ -111,28 +107,23 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
     #[inline]
     pub(crate) fn get(&self) -> P {
         let mut value = P::ZERO;
+
+        let src = self.bit_ptr;
+        let dst = BitPointer::new_normalized((&mut value).into(), 0);
         unsafe {
-            copy_bits_raw(
-                self.ptr.as_ptr(),
-                self.offset.value(),
-                &mut value,
-                0,
-                P::BIT_COUNT,
-            );
+            copy_bits_ptr(src, dst, P::BIT_COUNT);
         }
+
         value
     }
 
     #[inline]
     fn set(&mut self, value: P) {
+        let src = BitPointer::new_normalized((&value).into(), 0);
+        let dst = self.bit_ptr;
+
         unsafe {
-            copy_bits_raw(
-                &value,
-                0,
-                self.ptr.as_mut_ptr(),
-                self.offset.value(),
-                P::BIT_COUNT,
-            );
+            copy_bits_ptr(src, dst, P::BIT_COUNT);
         }
     }
 }
@@ -176,7 +167,7 @@ impl<P: BitsPrimitive> AsMut<BitStr> for Primitive<P> {
 mod tests {
     use std::ops::Not;
 
-    use crate::refrepr::{RefRepr, TypedRefComponents};
+    use crate::refrepr::{BitPointer, RefRepr, TypedRefComponents};
     use crate::{BitStr, BitsPrimitive, Primitive};
 
     fn new_ref<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> &Primitive<P> {
@@ -193,7 +184,10 @@ mod tests {
     }
 
     fn repr<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> RefRepr {
-        let components = TypedRefComponents::new_normalized(under.into(), offset, P::BIT_COUNT);
+        let components = TypedRefComponents {
+            bit_ptr: BitPointer::new_normalized(under.into(), offset),
+            bit_count: P::BIT_COUNT,
+        };
         components.encode()
     }
 

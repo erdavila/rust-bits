@@ -1,7 +1,7 @@
 use std::cmp;
 
-use crate::refrepr::{Offset, TypedPointer};
-use crate::utils::{normalize_ptr_and_offset, BitPattern, CountedBits};
+use crate::refrepr::{BitPointer, Offset, TypedPointer};
+use crate::utils::{BitPattern, CountedBits};
 use crate::BitsPrimitive;
 
 /// Copies bits.
@@ -29,49 +29,25 @@ pub fn copy_bits<S: BitsPrimitive, D: BitsPrimitive>(
         "the destination bits range must be fully contained in the destination slice"
     );
 
+    let src = BitPointer::new_normalized(src.into(), src_offset);
+    let dst = BitPointer::new_normalized(dst.into(), dst_offset);
+
     unsafe {
-        copy_bits_raw(
-            src.as_ptr(),
-            src_offset,
-            dst.as_mut_ptr(),
-            dst_offset,
-            bit_count,
-        )
+        copy_bits_ptr(src, dst, bit_count);
     };
 }
 
-/// Copies bits.
-///
-/// # Safety
-///
-/// Consider:
-/// * source region: region of memory composed of contiguous `S` values
-/// beginning at `src` and containing  at least `src_offset + bit_count` bits,
-/// rounded up to consider full `S` values.
-/// * destination region: region of memory composed of contiguous `D` values
-/// beginning at `dst` and containing  at least `dst_offset + bit_count` bits,
-/// rounded up to consider full `D` values.
-///
-/// Behavior is undefined if any of the following conditions are violated:
-/// * The source region must be [valid] for reads.
-/// * The destination region must be [valid] for writes.
-/// * Both `src` and `dst` must be properly aligned.
-/// * Both regions must *not* overlap.
-///
-/// [valid]: std::ptr#safety
-pub unsafe fn copy_bits_raw<S: BitsPrimitive, D: BitsPrimitive>(
-    src: *const S,
-    src_offset: usize,
-    dst: *mut D,
-    dst_offset: usize,
+pub(crate) unsafe fn copy_bits_ptr<S: BitsPrimitive, D: BitsPrimitive>(
+    src: BitPointer<S>,
+    dst: BitPointer<D>,
     mut bit_count: usize,
 ) {
     if bit_count == 0 {
         return;
     }
 
-    let mut source = Source::new(src, src_offset);
-    let mut destination = Destination::new(dst, dst_offset);
+    let mut source = Source::new(src);
+    let mut destination = Destination::new(dst);
 
     while bit_count > 0 {
         let bits = source.read(bit_count);
@@ -94,10 +70,10 @@ struct Source<P: BitsPrimitive> {
 }
 
 impl<P: BitsPrimitive> Source<P> {
-    pub fn new(ptr: *const P, offset: usize) -> Self {
-        let (ptr, offset) = unsafe { normalize_ptr_and_offset((ptr as *mut P).into(), offset) };
+    pub fn new(bit_ptr: BitPointer<P>) -> Self {
+        let ptr = bit_ptr.elem_ptr();
         let mut buffer = CountedBits::from(unsafe { ptr.read() });
-        buffer.drop_lsb(offset.value());
+        buffer.drop_lsb(bit_ptr.offset().value());
 
         Source { ptr, buffer }
     }
@@ -117,17 +93,14 @@ impl<P: BitsPrimitive> Source<P> {
 }
 
 struct Destination<P: BitsPrimitive> {
-    ptr: TypedPointer<P>,
-    offset: Offset<P>,
+    bit_ptr: BitPointer<P>,
     buffer: CountedBits<P>,
 }
 
 impl<P: BitsPrimitive> Destination<P> {
-    pub fn new(ptr: *mut P, offset: usize) -> Self {
-        let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr.into(), offset) };
+    pub fn new(bit_ptr: BitPointer<P>) -> Self {
         Destination {
-            ptr,
-            offset,
+            bit_ptr,
             buffer: CountedBits::new(),
         }
     }
@@ -138,8 +111,8 @@ impl<P: BitsPrimitive> Destination<P> {
             let popped_bits = CountedBits::from_usize(popped_bits);
             self.buffer.push_msb(popped_bits);
 
-            if self.offset.value() > 0 {
-                let bit_count_to_write = P::BIT_COUNT - self.offset.value();
+            if self.bit_ptr.offset().value() > 0 {
+                let bit_count_to_write = P::BIT_COUNT - self.bit_ptr.offset().value();
                 if self.buffer.count >= bit_count_to_write {
                     let bits_to_write = self.buffer.pop_lsb(bit_count_to_write);
                     debug_assert!(bits_to_write.count == bit_count_to_write);
@@ -160,23 +133,23 @@ impl<P: BitsPrimitive> Destination<P> {
 
     fn write_next_elem(&mut self, bits: P) {
         unsafe {
-            self.ptr.write(bits);
-            self.ptr = self.ptr.add(1);
+            self.bit_ptr.elem_ptr().write(bits);
+            self.bit_ptr.set_elem_ptr(self.bit_ptr.elem_ptr().add(1));
         }
     }
 
     fn write_next_elem_keeping_surrounding_bits(&mut self, bits: CountedBits<P>) {
-        let lsb_keep_bit_count = self.offset;
+        let lsb_keep_bit_count = self.bit_ptr.offset();
 
-        let mut elem_bits = unsafe { self.ptr.read() };
+        let mut elem_bits = unsafe { self.bit_ptr.elem_ptr().read() };
         elem_bits &= BitPattern::new_with_ones()
             .and_zeros(bits.count)
             .and_ones(lsb_keep_bit_count.value())
             .get();
-        elem_bits |= bits.bits << self.offset.value();
+        elem_bits |= bits.bits << self.bit_ptr.offset().value();
         self.write_next_elem(elem_bits);
 
-        self.offset = Offset::new(0);
+        self.bit_ptr.set_offset(Offset::new(0));
     }
 }
 

@@ -1,8 +1,9 @@
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 
-use crate::refrepr::{RefRepr, TypedRefComponents, UntypedPointer, UntypedRefComponents};
-use crate::utils::normalize_ptr_and_offset;
+use crate::refrepr::{
+    BitPointer, RefRepr, TypedRefComponents, UntypedPointer, UntypedRefComponents,
+};
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 use crate::{BitStr, BitsPrimitive, Primitive, PrimitiveAccessor};
 
@@ -296,9 +297,8 @@ fn select_bit_value(args: SelectOutputArgs) -> BitValue {
             type Output = BitValue;
             #[inline]
             fn select<U: crate::BitsPrimitive>(self) -> Self::Output {
-                let (ptr, offset) =
-                    unsafe { normalize_ptr_and_offset(self.ptr.as_typed::<U>(), self.offset) };
-                let accessor = BitAccessor::new(ptr, offset);
+                let bit_ptr = BitPointer::new_normalized(self.ptr.as_typed::<U>(), self.offset);
+                let accessor = BitAccessor::new(bit_ptr);
                 accessor.get()
             }
         }
@@ -321,9 +321,8 @@ fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
             type Output = P;
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let (ptr, offset) =
-                    unsafe { normalize_ptr_and_offset(self.ptr.as_typed(), self.offset) };
-                let accessor = PrimitiveAccessor::<P, U>::new(ptr, offset);
+                let bit_ptr = BitPointer::new_normalized(self.ptr.as_typed(), self.offset);
+                let accessor = PrimitiveAccessor::<P, U>::new(bit_ptr);
                 accessor.get()
             }
         }
@@ -347,11 +346,10 @@ fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
             type Output = RefRepr;
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let components = TypedRefComponents::new_normalized(
-                    self.ptr.as_typed::<U>(),
-                    self.offset,
-                    self.bit_count,
-                );
+                let components = TypedRefComponents {
+                    bit_ptr: BitPointer::new_normalized(self.ptr.as_typed::<U>(), self.offset),
+                    bit_count: self.bit_count,
+                };
                 components.encode()
             }
         }

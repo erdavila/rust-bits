@@ -3,10 +3,10 @@ use std::ops::{Deref, DerefMut};
 
 use linear_deque::LinearDeque;
 
-use crate::copy_bits::copy_bits_raw;
+use crate::copy_bits::copy_bits_ptr;
 use crate::iter::BitIterator;
-use crate::refrepr::{Offset, RefRepr, TypedPointer, TypedRefComponents};
-use crate::utils::{normalize_ptr_and_offset, required_elements_for_bit_count, CountedBits};
+use crate::refrepr::{BitPointer, Offset, RefRepr, TypedRefComponents};
+use crate::utils::{required_elements_for_bit_count, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone, Debug)]
@@ -115,8 +115,7 @@ impl<U: BitsPrimitive> BitString<U> {
     #[inline]
     fn as_repr(&self) -> RefRepr {
         let components = TypedRefComponents {
-            ptr: self.buffer.as_ref().into(),
-            offset: self.offset,
+            bit_ptr: BitPointer::new(self.buffer.as_ref().into(), self.offset),
             bit_count: self.bit_count,
         };
 
@@ -271,13 +270,9 @@ impl<U: BitsPrimitive> IntoIter<U> {
     fn next_at_front(&mut self, bit_count: usize) -> Option<IntoIterNextItemParams<U>> {
         (bit_count <= self.bit_count()).then(|| {
             let ptr = self.buffer.as_ref().into();
-            let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, self.start_offset) };
+            let bit_ptr = BitPointer::new_normalized(ptr, self.start_offset);
             self.start_offset += bit_count;
-            IntoIterNextItemParams {
-                ptr,
-                offset,
-                bit_count,
-            }
+            IntoIterNextItemParams { bit_ptr, bit_count }
         })
     }
 
@@ -286,24 +281,20 @@ impl<U: BitsPrimitive> IntoIter<U> {
         (bit_count <= self.bit_count()).then(|| {
             let ptr = self.buffer.as_ref().into();
             self.end_offset -= bit_count;
-            let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, self.end_offset) };
-            IntoIterNextItemParams {
-                ptr,
-                offset,
-                bit_count,
-            }
+            let bit_ptr = BitPointer::new_normalized(ptr, self.end_offset);
+            IntoIterNextItemParams { bit_ptr, bit_count }
         })
     }
 
     #[inline]
     fn get_bit_value(params: IntoIterNextItemParams<U>) -> BitValue {
-        let accessor = BitAccessor::new(params.ptr, params.offset);
+        let accessor = BitAccessor::new(params.bit_ptr);
         accessor.get()
     }
 
     #[inline]
     fn get_primitive<P: BitsPrimitive>(params: IntoIterNextItemParams<U>) -> P {
-        let accessor = PrimitiveAccessor::<P, _>::new(params.ptr, params.offset);
+        let accessor = PrimitiveAccessor::<P, _>::new(params.bit_ptr);
         accessor.get()
     }
 
@@ -312,15 +303,13 @@ impl<U: BitsPrimitive> IntoIter<U> {
         let buffer_elems = required_elements_for_bit_count::<U>(params.bit_count);
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, U::ZERO);
+
+        let src = params.bit_ptr;
+        let dst = BitPointer::new_normalized(buffer.as_mut().into(), 0);
         unsafe {
-            copy_bits_raw(
-                params.ptr.as_ptr(),
-                params.offset.value(),
-                buffer.as_mut() as *mut [U] as *mut U,
-                0,
-                params.bit_count,
-            )
+            copy_bits_ptr(src, dst, params.bit_count);
         }
+
         BitString {
             buffer,
             offset: Offset::new(0),
@@ -377,8 +366,7 @@ impl<U: BitsPrimitive> ExactSizeIterator for IntoIter<U> {}
 impl<U: BitsPrimitive> FusedIterator for IntoIter<U> {}
 
 struct IntoIterNextItemParams<U: BitsPrimitive> {
-    ptr: TypedPointer<U>,
-    offset: Offset<U>,
+    bit_ptr: BitPointer<U>,
     bit_count: usize,
 }
 

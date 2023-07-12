@@ -1,7 +1,6 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
 use std::{cmp, mem};
 
-use crate::refrepr::{Offset, TypedPointer};
 use crate::{BitValue, BitsPrimitive};
 
 // The number of bits required to represent a number of values.
@@ -26,17 +25,6 @@ pub(crate) fn max_value_for_bit_count(bit_count: usize) -> usize {
 #[inline]
 pub(crate) fn required_elements_for_bit_count<P: BitsPrimitive>(bit_count: usize) -> usize {
     bit_count / P::BIT_COUNT + if bit_count % P::BIT_COUNT != 0 { 1 } else { 0 }
-}
-
-#[inline]
-pub(crate) unsafe fn normalize_ptr_and_offset<P: BitsPrimitive>(
-    ptr: TypedPointer<P>,
-    offset: usize,
-) -> (TypedPointer<P>, Offset<P>) {
-    let index = offset / P::BIT_COUNT;
-    let offset = Offset::new(offset);
-    let ptr = ptr.add(index);
-    (ptr, offset)
 }
 
 #[derive(Clone, Copy, Default)]

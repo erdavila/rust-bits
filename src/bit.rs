@@ -3,7 +3,8 @@ use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
 use crate::refrepr::{
-    Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents, UntypedRefComponents,
+    BitPointer, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents,
+    UntypedRefComponents,
 };
 use crate::{BitStr, BitsPrimitive};
 
@@ -36,7 +37,7 @@ impl Bit {
             type Output = BitValue;
             #[inline]
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let accessor = BitAccessor::new(components.ptr, components.offset);
+                let accessor = BitAccessor::new(components.bit_ptr);
                 accessor.get()
             }
         }
@@ -56,7 +57,7 @@ impl Bit {
             type Output = BitValue;
             #[inline]
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor = BitAccessor::new(components.ptr, components.offset);
+                let mut accessor = BitAccessor::new(components.bit_ptr);
                 let previous_value = accessor.get();
                 accessor.set(self.value);
                 previous_value
@@ -82,7 +83,7 @@ impl Bit {
             type Output = ();
             #[inline]
             fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor = BitAccessor::new(components.ptr, components.offset);
+                let mut accessor = BitAccessor::new(components.bit_ptr);
                 let previous_value = accessor.get();
                 let new_value = (self.f)(previous_value);
                 accessor.set(new_value);
@@ -118,10 +119,10 @@ pub(crate) struct BitAccessor<P: BitsPrimitive> {
 
 impl<P: BitsPrimitive> BitAccessor<P> {
     #[inline]
-    pub(crate) fn new(ptr: TypedPointer<P>, bit_index: Offset<P>) -> Self {
+    pub(crate) fn new(bit_ptr: BitPointer<P>) -> Self {
         BitAccessor {
-            ptr,
-            mask: P::ONE << bit_index.value(),
+            ptr: bit_ptr.elem_ptr(),
+            mask: P::ONE << bit_ptr.offset().value(),
         }
     }
 
@@ -210,7 +211,7 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
-    use crate::refrepr::{Offset, RefRepr, TypedRefComponents};
+    use crate::refrepr::{BitPointer, RefRepr, TypedRefComponents};
     use crate::BitValue::{One, Zero};
     use crate::{Bit, BitStr, BitsPrimitive};
 
@@ -226,8 +227,7 @@ mod tests {
 
     fn repr<U: BitsPrimitive>(under: &U, bit_index: usize) -> RefRepr {
         let components = TypedRefComponents {
-            ptr: under.into(),
-            offset: Offset::new(bit_index),
+            bit_ptr: BitPointer::new_normalized(under.into(), bit_index),
             bit_count: 1,
         };
         components.encode()

@@ -1,6 +1,4 @@
-use crate::utils::{
-    max_value_for_bit_count, normalize_ptr_and_offset, values_count_to_bit_count, BitPattern,
-};
+use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
 use crate::{BitsPrimitive, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 
 const DISCRIMINANT_BIT_COUNT: usize = 3;
@@ -38,11 +36,15 @@ impl RefRepr {
 
         let metadata = Metadata {
             underlying_primitive: U::DISCRIMINANT,
-            offset: components.offset.value(),
+            offset: components.bit_ptr.offset().value(),
             bit_count: components.bit_count,
         };
         let bit_counts = ComponentsBitCounts::new::<U>();
-        untyped_encode(components.ptr.as_untyped(), metadata, bit_counts)
+        untyped_encode(
+            components.bit_ptr.elem_ptr().as_untyped(),
+            metadata,
+            bit_counts,
+        )
     }
 
     #[inline]
@@ -117,13 +119,9 @@ mod typed_pointer {
             Self::from(self.0.as_ptr().add(count))
         }
 
+        #[cfg(test)]
         #[inline]
         pub(crate) fn as_ptr(self) -> *const P {
-            self.0.as_ptr()
-        }
-
-        #[inline]
-        pub(crate) fn as_mut_ptr(self) -> *mut P {
             self.0.as_ptr()
         }
 
@@ -147,9 +145,23 @@ mod typed_pointer {
         }
     }
 
+    impl<P: BitsPrimitive> From<&mut P> for TypedPointer<P> {
+        #[inline]
+        fn from(value: &mut P) -> Self {
+            TypedPointer(NonNull::from(value))
+        }
+    }
+
     impl<P: BitsPrimitive> From<&[P]> for TypedPointer<P> {
         #[inline]
         fn from(value: &[P]) -> Self {
+            TypedPointer(NonNull::from(value).cast())
+        }
+    }
+
+    impl<P: BitsPrimitive> From<&mut [P]> for TypedPointer<P> {
+        #[inline]
+        fn from(value: &mut [P]) -> Self {
             TypedPointer(NonNull::from(value).cast())
         }
     }
@@ -190,6 +202,56 @@ mod offset {
     }
 }
 pub(crate) use offset::*;
+
+mod bit_pointer {
+    use crate::BitsPrimitive;
+
+    use super::{Offset, TypedPointer};
+
+    #[derive(Clone, Copy, Debug)]
+    pub(crate) struct BitPointer<P: BitsPrimitive>(TypedPointer<P>, Offset<P>);
+
+    impl<P: BitsPrimitive> BitPointer<P> {
+        #[inline]
+        pub(crate) fn new(ptr: TypedPointer<P>, offset: Offset<P>) -> Self {
+            BitPointer(ptr, offset)
+        }
+
+        #[inline]
+        pub(crate) fn new_normalized(ptr: TypedPointer<P>, offset: usize) -> Self {
+            let index = offset / P::BIT_COUNT;
+            let ptr = unsafe { ptr.add(index) };
+            let offset = Offset::new(offset);
+            Self::new(ptr, offset)
+        }
+
+        #[inline]
+        pub(crate) fn elem_ptr(self) -> TypedPointer<P> {
+            self.0
+        }
+
+        #[inline]
+        pub(crate) fn set_elem_ptr(&mut self, elem_ptr: TypedPointer<P>) {
+            self.0 = elem_ptr;
+        }
+
+        #[inline]
+        pub(crate) fn offset(self) -> Offset<P> {
+            self.1
+        }
+
+        #[inline]
+        pub(crate) fn set_offset(&mut self, value: Offset<P>) {
+            self.1 = value;
+        }
+
+        #[inline]
+        pub(crate) fn add_offset(self, count: usize) -> Self {
+            BitPointer::new_normalized(self.elem_ptr(), self.offset().value() + count)
+        }
+    }
+}
+pub(crate) use bit_pointer::*;
 
 #[repr(transparent)]
 pub(crate) struct EncodedMetadata(usize);
@@ -252,11 +314,14 @@ impl UntypedRefComponents {
 
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
+                let elem_ptr = self.untyped_components.ptr.as_typed::<U>();
+                let offset = self.untyped_components.metadata.offset;
+
                 let components = TypedRefComponents {
-                    ptr: self.untyped_components.ptr.as_typed::<U>(),
-                    offset: Offset::new(self.untyped_components.metadata.offset),
+                    bit_ptr: BitPointer::new_normalized(elem_ptr, offset),
                     bit_count: self.untyped_components.metadata.bit_count,
                 };
+
                 self.selector.select(components)
             }
         }
@@ -276,22 +341,11 @@ pub(crate) trait RefComponentsSelector {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypedRefComponents<P: BitsPrimitive> {
-    pub(crate) ptr: TypedPointer<P>,
-    pub(crate) offset: Offset<P>,
+    pub(crate) bit_ptr: BitPointer<P>,
     pub(crate) bit_count: usize,
 }
 
 impl<P: BitsPrimitive> TypedRefComponents<P> {
-    #[inline]
-    pub(crate) fn new_normalized(ptr: TypedPointer<P>, offset: usize, bit_count: usize) -> Self {
-        let (ptr, offset) = unsafe { normalize_ptr_and_offset(ptr, offset) };
-        TypedRefComponents {
-            ptr,
-            offset,
-            bit_count,
-        }
-    }
-
     #[inline]
     pub(crate) fn encode(self) -> RefRepr {
         RefRepr::encode(self)
@@ -384,7 +438,8 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::refrepr::{
-        encode_discriminant, EncodedMetadata, Offset, TypedRefComponents, DISCRIMINANT_BIT_COUNT,
+        encode_discriminant, BitPointer, EncodedMetadata, Offset, TypedRefComponents,
+        DISCRIMINANT_BIT_COUNT,
     };
     use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
     use crate::BitsPrimitive;
@@ -456,22 +511,24 @@ mod tests {
         macro_rules! assert_conversions {
             ($type:ty, $under:ident, $offset:expr, $bit_count:expr) => {
                 let original_components = TypedRefComponents {
-                    ptr: $under.into(),
-                    offset: Offset::new($offset),
+                    bit_ptr: BitPointer::new($under.into(), Offset::new($offset)),
                     bit_count: $bit_count,
                 };
 
                 let repr = original_components.encode();
                 let components = repr.decode();
 
-                assert_eq!(components.ptr, original_components.ptr.as_untyped());
+                assert_eq!(
+                    components.ptr,
+                    original_components.bit_ptr.elem_ptr().as_untyped()
+                );
                 assert_eq!(
                     components.metadata.underlying_primitive,
                     <$type>::DISCRIMINANT
                 );
                 assert_eq!(
                     components.metadata.offset,
-                    original_components.offset.value()
+                    original_components.bit_ptr.offset().value()
                 );
                 assert_eq!(components.metadata.bit_count, original_components.bit_count);
             };
@@ -550,8 +607,7 @@ mod tests {
                 let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
 
                 let components = TypedRefComponents {
-                    ptr: (&under).into(),
-                    offset: Offset::new(0),
+                    bit_ptr: BitPointer::new_normalized((&under).into(), 0),
                     bit_count: max_bit_count + 1,
                 };
 
@@ -575,13 +631,16 @@ mod tests {
                 let under = &mut memory;
                 let ptr = under.as_ref().into();
 
-                let components = TypedRefComponents::new_normalized(ptr, $offset, 1);
+                let components = TypedRefComponents {
+                    bit_ptr: BitPointer::new_normalized(ptr, $offset),
+                    bit_count: 1,
+                };
 
                 assert_eq!(
-                    components.ptr.as_ptr(),
+                    components.bit_ptr.elem_ptr().as_ptr(),
                     unsafe { ptr.as_ptr().add($expected_index) }.cast()
                 );
-                assert_eq!(components.offset.value(), $expected_offset);
+                assert_eq!(components.bit_ptr.offset().value(), $expected_offset);
             };
         }
 
