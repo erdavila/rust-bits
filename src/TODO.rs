@@ -24,8 +24,9 @@ fn bit_string_construction() {
             Otherwise, the '0b' is recognized as a binary digits indicator.
      */
     let bit_string = bit_string!(literal_string);
-    let bit_string = bit_string!(literal_string, u8); // ... and other primitive types
-    let _: Result<BitString, _> = str.parse();
+    let bit_string = bit_string!(literal_string, u8); // ... and other primitive types (?)
+    let bit_string: BitString<u8> = bit_string!(literal_string); // ... and other primitive types
+    let _: Result<BitString, _> = str.parse::<BitString>();
 
     let msb: usize;
     let lsb: usize;

@@ -1,5 +1,7 @@
 use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
+use std::slice;
+use std::str::FromStr;
 
 use linear_deque::LinearDeque;
 
@@ -203,6 +205,120 @@ impl<U: BitsPrimitive> Default for BitString<U> {
     #[inline]
     fn default() -> Self {
         Self::new_with_underlying_type()
+    }
+}
+
+impl<U: BitsPrimitive> FromStr for BitString<U> {
+    type Err = BitStringParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bit_string = BitString::new_with_underlying_type();
+
+        #[inline]
+        fn push_bits<U: BitsPrimitive>(value: CountedBits<u8>, bit_string: &mut BitString<U>) {
+            let bit_str = &BitStr::new_ref(slice::from_ref(&value.bits))[0..value.count];
+            bit_string.lsb().push(bit_str)
+        }
+
+        #[derive(Clone, Copy)]
+        enum Base {
+            Bin,
+            Hex,
+        }
+
+        impl Base {
+            #[inline]
+            fn parse_digit(&self, ch: char) -> Result<CountedBits<u8>, char> {
+                match self {
+                    Base::Bin => {
+                        let value = match ch {
+                            '0' | '1' => (ch as u8) - b'0',
+                            _ => return Err(ch),
+                        };
+                        Ok(CountedBits::with_count(value, 1))
+                    }
+                    Base::Hex => {
+                        let value = match ch {
+                            'a'..='f' => (ch as u8) - b'a' + 10,
+                            'A'..='F' => (ch as u8) - b'A' + 10,
+                            '0'..='9' => (ch as u8) - b'0',
+                            _ => return Err(ch),
+                        };
+                        Ok(CountedBits::with_count(value, 4))
+                    }
+                }
+            }
+
+            #[inline]
+            fn other(&self) -> Self {
+                match self {
+                    Base::Bin => Base::Hex,
+                    Base::Hex => Base::Bin,
+                }
+            }
+        }
+
+        enum State {
+            Expect(Base),
+            ExpectZeroFound(Base, CountedBits<u8>),
+            Group(Base),
+        }
+
+        let mut state = State::Expect(Base::Bin);
+
+        for (index, ch) in s.chars().enumerate() {
+            match state {
+                State::Expect(base) => match base.parse_digit(ch) {
+                    Ok(value) if ch == '0' => state = State::ExpectZeroFound(base, value),
+                    Ok(value) => {
+                        push_bits(value, &mut bit_string);
+                        state = State::Group(base);
+                    }
+                    Err('_') => state = State::Group(base),
+                    Err(':') => state = State::Expect(base.other()),
+                    _ => return Err(BitStringParseError(index)),
+                },
+                State::ExpectZeroFound(base, digit_zero_value) => match base.parse_digit(ch) {
+                    _ if ch == 'b' => state = State::Group(Base::Bin),
+                    _ if ch == 'x' => state = State::Group(Base::Hex),
+                    Ok(value) => {
+                        push_bits(digit_zero_value, &mut bit_string);
+                        push_bits(value, &mut bit_string);
+                        state = State::Group(base);
+                    }
+                    Err('_') => {
+                        push_bits(digit_zero_value, &mut bit_string);
+                        state = State::Group(base);
+                    }
+                    Err(':') => {
+                        push_bits(digit_zero_value, &mut bit_string);
+                        state = State::Expect(base.other());
+                    }
+                    _ => return Err(BitStringParseError(index)),
+                },
+                State::Group(base) => match base.parse_digit(ch) {
+                    Ok(value) => push_bits(value, &mut bit_string),
+                    Err('_') => (),
+                    Err(':') => state = State::Expect(base.other()),
+                    _ => return Err(BitStringParseError(index)),
+                },
+            }
+        }
+
+        if let State::ExpectZeroFound(_, digit_zero_value) = state {
+            push_bits(digit_zero_value, &mut bit_string);
+        }
+
+        Ok(bit_string)
+    }
+}
+
+#[derive(Debug)]
+pub struct BitStringParseError(usize);
+impl BitStringParseError {
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.0
     }
 }
 
@@ -585,5 +701,78 @@ mod tests {
         assert!(iter.next_n_back(1).is_none());
         assert_eq!(iter.next_n(0).unwrap().as_ref(), &[]);
         assert_eq!(iter.next_n_back(0).unwrap().as_ref(), &[]);
+    }
+
+    #[test]
+    fn from_str() {
+        macro_rules! assert_ok {
+            ($str:literal, $expected_bits:expr) => {
+                let parsed = $str.parse::<BitString>().unwrap();
+                assert_eq!(parsed.as_ref(), &$expected_bits);
+            };
+        }
+
+        macro_rules! assert_err {
+            ($str:literal, $expected_index:expr) => {
+                let err = $str.parse::<BitString>().unwrap_err();
+                assert_eq!(err.index(), $expected_index);
+            };
+        }
+
+        assert_ok!("", []);
+        assert_ok!(":", []);
+        assert_ok!("::", []);
+        assert_ok!("10", [Zero, One]);
+        assert_ok!("001", [One, Zero, Zero]);
+        assert_ok!("01", [One, Zero]);
+        assert_ok!("0b", []);
+        assert_ok!("0b10", [Zero, One]);
+        assert_ok!("0b01", [One, Zero]);
+        assert_ok!("0b_1_0_", [Zero, One]);
+        assert_ok!("0b_0_1_", [One, Zero]);
+        assert_ok!("_1_0_", [Zero, One]);
+        assert_ok!("_0_1_", [One, Zero]);
+        assert_ok!("0_1_", [One, Zero]);
+        assert_ok!("0:F", [One, One, One, One, Zero]);
+        assert_ok!("0x", []);
+        assert_ok!("0xa", [Zero, One, Zero, One]);
+        assert_ok!("0x_a", [Zero, One, Zero, One]);
+        assert_ok!("0xa_", [Zero, One, Zero, One]);
+        assert_ok!("0:_a", [Zero, One, Zero, One, Zero]);
+        assert_ok!("1:0", [Zero, Zero, Zero, Zero, One]);
+        assert_ok!(
+            "101:aB",
+            [One, One, Zero, One, Zero, One, Zero, One, One, Zero, One]
+        );
+        assert_ok!(
+            "0b101:0xaB",
+            [One, One, Zero, One, Zero, One, Zero, One, One, Zero, One]
+        );
+        assert_ok!(
+            "0xaB:0b101",
+            [One, Zero, One, One, One, Zero, One, Zero, One, Zero, One]
+        );
+        assert_ok!(
+            "0xaB:101",
+            [One, Zero, One, One, One, Zero, One, Zero, One, Zero, One]
+        );
+        assert_ok!("100:0b10011", [One, One, Zero, Zero, One, Zero, Zero, One]);
+        assert_ok!("0xB::A", [Zero, One, Zero, One, One, One, Zero, One]);
+        assert_ok!("1::1", [One, One]);
+        assert_ok!(
+            "1:00",
+            [Zero, Zero, Zero, Zero, Zero, Zero, Zero, Zero, One]
+        );
+        assert_ok!("1:0a", [Zero, One, Zero, One, Zero, Zero, Zero, Zero, One]);
+        assert_ok!("1:0_a", [Zero, One, Zero, One, Zero, Zero, Zero, Zero, One]);
+        assert_ok!("1:0:1", [One, Zero, Zero, Zero, Zero, One]);
+
+        assert_err!("0a", 1);
+        assert_err!("1b", 1);
+        assert_err!("1x", 1);
+        assert_err!("1:x:", 2);
+        assert_err!("0xBx", 3);
+        assert_err!("0xB:x", 4);
+        assert_err!("0xB:b", 4);
     }
 }
