@@ -1,3 +1,4 @@
+use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
 use std::slice;
@@ -11,7 +12,7 @@ use crate::refrepr::{BitPointer, Offset, RefRepr, TypedRefComponents};
 use crate::utils::{required_elements_for_bit_count, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BitString<U: BitsPrimitive = usize> {
     buffer: LinearDeque<U>,
     offset: Offset<U>,
@@ -310,6 +311,41 @@ impl<U: BitsPrimitive> FromStr for BitString<U> {
         }
 
         Ok(bit_string)
+    }
+}
+
+impl<U: BitsPrimitive> Display for BitString<U> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self.as_ref(), f)
+    }
+}
+
+impl<U: BitsPrimitive> Binary for BitString<U> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Binary::fmt(self.as_ref(), f)
+    }
+}
+
+impl<U: BitsPrimitive> LowerHex for BitString<U> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        LowerHex::fmt(self.as_ref(), f)
+    }
+}
+
+impl<U: BitsPrimitive> UpperHex for BitString<U> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        UpperHex::fmt(self.as_ref(), f)
+    }
+}
+
+impl<U: BitsPrimitive> Debug for BitString<U> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self.as_ref(), f)
     }
 }
 
@@ -774,5 +810,69 @@ mod tests {
         assert_err!("0xBx", 3);
         assert_err!("0xB:x", 4);
         assert_err!("0xB:b", 4);
+    }
+
+    #[test]
+    fn formatting() {
+        let bit_string = BitString::from(0b01101100u8);
+
+        assert_eq!(format!("{bit_string}"), "01101100");
+        assert_eq!(format!("{bit_string:#}"), "0b01101100");
+        assert_eq!(format!("{bit_string:b}"), "01101100");
+        assert_eq!(format!("{bit_string:#b}"), "0b01101100");
+        assert_eq!(format!("{bit_string:x}"), "6c");
+        assert_eq!(format!("{bit_string:#x}"), "0x6c");
+        assert_eq!(format!("{bit_string:X}"), "6C");
+        assert_eq!(format!("{bit_string:#X}"), "0x6C");
+        assert_eq!(format!("{bit_string:?}"), "\"01101100\"");
+        assert_eq!(format!("{bit_string:#?}"), "\"0b01101100\"");
+
+        let bit_string = BitString::from(&bit_string[0..7]);
+
+        assert_eq!(format!("{bit_string}"), "1101100");
+        assert_eq!(format!("{bit_string:#}"), "0b1101100");
+        assert_eq!(format!("{bit_string:b}"), "1101100");
+        assert_eq!(format!("{bit_string:#b}"), "0b1101100");
+        assert_eq!(format!("{bit_string:x}"), "110:c");
+        assert_eq!(format!("{bit_string:#x}"), "0b110:0xc");
+        assert_eq!(format!("{bit_string:X}"), "110:C");
+        assert_eq!(format!("{bit_string:#X}"), "0b110:0xC");
+        assert_eq!(format!("{bit_string:?}"), "\"1101100\"");
+        assert_eq!(format!("{bit_string:#?}"), "\"0b1101100\"");
+    }
+
+    #[test]
+    fn formatting_and_parsing() {
+        macro_rules! assert_format {
+            ($bit_string:expr, $format:literal, $expected_formatted:literal) => {{
+                let formatted = format!(concat!("{", $format, "}"), $bit_string);
+                let parsed = formatted.parse::<BitString>();
+
+                assert_eq!(formatted, $expected_formatted);
+                assert_eq!(parsed.unwrap().as_ref(), $bit_string.as_ref());
+            }};
+        }
+
+        let bit_string = BitString::from(0b01101100u8);
+
+        assert_format!(bit_string, "", "01101100");
+        assert_format!(bit_string, ":#", "0b01101100");
+        assert_format!(bit_string, ":b", "01101100");
+        assert_format!(bit_string, ":#b", "0b01101100");
+        // assert_format!(bit_string, ":x", "6c"); // "0x" is required for parsing
+        assert_format!(bit_string, ":#x", "0x6c");
+        // assert_format!(bit_string, ":X", "6C"); // "0x" is required for parsing
+        assert_format!(bit_string, ":#X", "0x6C");
+
+        let bit_string = BitString::from(&bit_string[0..7]);
+
+        assert_format!(bit_string, "", "1101100");
+        assert_format!(bit_string, ":#", "0b1101100");
+        assert_format!(bit_string, ":b", "1101100");
+        assert_format!(bit_string, ":#b", "0b1101100");
+        assert_format!(bit_string, ":x", "110:c");
+        assert_format!(bit_string, ":#x", "0b110:0xc");
+        assert_format!(bit_string, ":X", "110:C");
+        assert_format!(bit_string, ":#X", "0b110:0xC");
     }
 }
