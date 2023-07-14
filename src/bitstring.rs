@@ -1,4 +1,5 @@
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
+use std::hash::Hash;
 use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
 use std::slice;
@@ -199,6 +200,71 @@ impl<U: BitsPrimitive> IntoIterator for BitString<U> {
             start_offset: self.offset.value(),
             end_offset: self.offset.value() + self.bit_count,
         }
+    }
+}
+
+impl<U: BitsPrimitive> Eq for BitString<U> {}
+
+impl<U: BitsPrimitive, U2: BitsPrimitive> PartialEq<BitString<U2>> for BitString<U> {
+    #[inline]
+    fn eq(&self, other: &BitString<U2>) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl<U: BitsPrimitive> PartialEq<&BitStr> for BitString<U> {
+    #[inline]
+    fn eq(&self, other: &&BitStr) -> bool {
+        self.as_ref() == *other
+    }
+}
+
+impl<U: BitsPrimitive> PartialEq<&mut BitStr> for BitString<U> {
+    #[inline]
+    fn eq(&self, other: &&mut BitStr) -> bool {
+        self.as_ref() == *other
+    }
+}
+
+impl<U: BitsPrimitive> PartialEq<BitString<U>> for &BitStr {
+    #[inline]
+    fn eq(&self, other: &BitString<U>) -> bool {
+        *self == other.as_ref()
+    }
+}
+
+impl<U: BitsPrimitive> PartialEq<BitString<U>> for &mut BitStr {
+    #[inline]
+    fn eq(&self, other: &BitString<U>) -> bool {
+        *self == other.as_ref()
+    }
+}
+
+impl<U: BitsPrimitive, S: AsRef<[BitValue]>> PartialEq<S> for BitString<U> {
+    #[inline]
+    fn eq(&self, other: &S) -> bool {
+        self.as_ref().eq_slice(other.as_ref())
+    }
+}
+
+impl<U: BitsPrimitive, const N: usize> PartialEq<BitString<U>> for [BitValue; N] {
+    #[inline]
+    fn eq(&self, other: &BitString<U>) -> bool {
+        *other == *self
+    }
+}
+
+impl<U: BitsPrimitive> PartialEq<BitString<U>> for Vec<BitValue> {
+    #[inline]
+    fn eq(&self, other: &BitString<U>) -> bool {
+        *other == *self
+    }
+}
+
+impl<U: BitsPrimitive> Hash for BitString<U> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_ref().hash(state);
     }
 }
 
@@ -578,7 +644,7 @@ mod tests {
 
         assert_eq!(string.len(), 20);
         assert_eq!(
-            string.deref(),
+            string,
             [
                 One, Zero, One, One, Zero, Zero, One, Zero, Zero, One, One, Zero, Zero, Zero, One,
                 One, Zero, One, One, Zero
@@ -592,7 +658,7 @@ mod tests {
 
         let string = BitString::from(source.as_ref());
 
-        assert_eq!(string.deref(), BitStr::new_ref(&source));
+        assert_eq!(string, BitStr::new_ref(&source));
     }
 
     #[test]
@@ -636,7 +702,7 @@ mod tests {
         let string = BitString::from(&source[2..14]);
 
         assert_eq!(string.len(), 12);
-        assert_eq!(string.deref(), &source[2..14]);
+        assert_eq!(string, &source[2..14]);
     }
 
     #[test]
@@ -673,7 +739,7 @@ mod tests {
         let bit_string = BitString::from_iter(source.iter());
 
         assert_eq!(bit_string.len(), 12);
-        assert_eq!(bit_string.deref(), source);
+        assert_eq!(bit_string, source);
     }
 
     #[test]
@@ -683,7 +749,7 @@ mod tests {
         let bit_string = BitString::from_iter(bits.into_iter());
 
         assert_eq!(bit_string.len(), 16);
-        assert_eq!(bit_string.deref(), BitStr::new_ref(&bits));
+        assert_eq!(bit_string, BitStr::new_ref(&bits));
     }
 
     #[test]
@@ -710,7 +776,7 @@ mod tests {
         assert_eq!(iter.len(), 20); // [87654]FEDCB
         {
             let bit_string: Option<BitString> = iter.next_n(4);
-            assert_eq!(bit_string.unwrap().as_ref(), [Zero, Zero, One, Zero]); // 4: 0100
+            assert_eq!(bit_string.unwrap(), [Zero, Zero, One, Zero]); // 4: 0100
         }
         assert_eq!(iter.len(), 16); // [8765]4FEDCB
         assert_eq!(iter.next_back().unwrap(), One); // 8: [1]000
@@ -724,10 +790,7 @@ mod tests {
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
         assert!(iter.next_n_back(5).is_none());
-        assert_eq!(
-            iter.next_n_back(4).unwrap().as_ref(),
-            [One, Zero, One, Zero]
-        ); // 5: 0101
+        assert_eq!(iter.next_n_back(4).unwrap(), [One, Zero, One, Zero]); // 5: 0101
         assert_eq!(iter.len(), 0); // 8765[]4FEDCB
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
@@ -735,8 +798,50 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n_back(1).is_none());
-        assert_eq!(iter.next_n(0).unwrap().as_ref(), []);
-        assert_eq!(iter.next_n_back(0).unwrap().as_ref(), []);
+        assert_eq!(iter.next_n(0).unwrap(), []);
+        assert_eq!(iter.next_n_back(0).unwrap(), []);
+    }
+
+    #[test]
+    fn eq() {
+        let mut bit_string_1 = "01".parse::<BitString>().unwrap();
+        let mut bit_string_2 = "01".parse::<BitString>().unwrap();
+        let mut bit_string_3 = "01".parse::<BitString<u8>>().unwrap();
+        let mut bit_string_ne = "10".parse::<BitString>().unwrap();
+
+        assert!(bit_string_1 == bit_string_1);
+        assert!(bit_string_1 == bit_string_2);
+        assert!(bit_string_1 == bit_string_3);
+        assert!(bit_string_1 != bit_string_ne);
+
+        assert!(bit_string_1 == bit_string_1.as_bit_str());
+        assert!(bit_string_1 == bit_string_2.as_bit_str());
+        assert!(bit_string_1 == bit_string_3.as_bit_str());
+        assert!(bit_string_1 != bit_string_ne.as_bit_str());
+
+        assert!(bit_string_1 == bit_string_1.clone().as_bit_str_mut());
+        assert!(bit_string_1 == bit_string_2.as_bit_str_mut());
+        assert!(bit_string_1 == bit_string_3.as_bit_str_mut());
+        assert!(bit_string_1 != bit_string_ne.as_bit_str_mut());
+
+        assert!(bit_string_1.as_bit_str() == bit_string_1);
+        assert!(bit_string_1.as_bit_str() == bit_string_2);
+        assert!(bit_string_1.as_bit_str() == bit_string_3);
+        assert!(bit_string_1.as_bit_str() != bit_string_ne);
+
+        assert!(bit_string_1.clone().as_bit_str_mut() == bit_string_1);
+        assert!(bit_string_1.as_bit_str_mut() == bit_string_2);
+        assert!(bit_string_1.as_bit_str_mut() == bit_string_3);
+        assert!(bit_string_1.as_bit_str_mut() != bit_string_ne);
+
+        assert!(bit_string_1 == [One, Zero]);
+        assert!(bit_string_1 != [Zero, One]);
+
+        assert!([One, Zero] == bit_string_1);
+        assert!([Zero, One] != bit_string_1);
+
+        assert!(vec![One, Zero] == bit_string_1);
+        assert!(vec![Zero, One] != bit_string_1);
     }
 
     #[test]
@@ -744,7 +849,7 @@ mod tests {
         macro_rules! assert_ok {
             ($str:literal, $expected_bits:expr) => {
                 let parsed = $str.parse::<BitString>().unwrap();
-                assert_eq!(parsed.as_ref(), $expected_bits);
+                assert_eq!(parsed, $expected_bits);
             };
         }
 
@@ -849,7 +954,7 @@ mod tests {
                 let parsed = formatted.parse::<BitString>();
 
                 assert_eq!(formatted, $expected_formatted);
-                assert_eq!(parsed.unwrap().as_ref(), $bit_string.as_ref());
+                assert_eq!(parsed.unwrap(), $bit_string);
             }};
         }
 
