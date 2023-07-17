@@ -323,7 +323,7 @@ mod tests {
 
             let bit_str: &BitStr = bit_ref.as_ref();
 
-            assert_eq!(bit_str, &[value]);
+            assert_eq!(bit_str, [value]);
         }
     }
 

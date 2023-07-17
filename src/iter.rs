@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(iter.len(), 28); // [76FEDCB]A
         assert_eq!(iter.next_primitive::<u8>(), Some(0xCB));
         assert_eq!(iter.len(), 20); // [76FED]CBA
-        assert_eq!(iter.next_n(4).unwrap(), &[One, Zero, One, One]); // D: 1101
+        assert_eq!(iter.next_n(4).unwrap(), [One, Zero, One, One]); // D: 1101
         assert_eq!(iter.len(), 16); // [76FE]DCBA
         assert_eq!(iter.next(), Some(Zero)); // E: 111[0]
         assert_eq!(iter.next(), Some(One)); // E: 11[1]0
@@ -556,12 +556,12 @@ mod tests {
         assert_eq!(iter.len(), 4); // [7]6FEDCBA
         assert!(iter.next_primitive::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
-        assert_eq!(iter.next_n(4).unwrap(), &[One, One, One, Zero]); // 7: 0111
+        assert_eq!(iter.next_n(4).unwrap(), [One, One, One, Zero]); // 7: 0111
         assert_eq!(iter.len(), 0); // []76FEDCBA
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
-        assert_eq!(iter.next_n(0).unwrap(), &[]);
+        assert_eq!(iter.next_n(0).unwrap(), []);
     }
 
     #[test]
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(iter.len(), 36); // [87654FEDC]B
         assert_eq!(iter.next_primitive::<u16>(), Some(0xFEDC));
         assert_eq!(iter.len(), 20); // [87654]FEDCB
-        assert_eq!(iter.next_n(4).unwrap(), &[Zero, Zero, One, Zero]); // 4: 0100
+        assert_eq!(iter.next_n(4).unwrap(), [Zero, Zero, One, Zero]); // 4: 0100
         assert_eq!(iter.len(), 16); // [8765]4FEDCB
         assert_eq!(iter.next_back(), Some(One)); // 8: [1]000
         assert_eq!(iter.next_back(), Some(Zero)); // 8: 1[0]00
@@ -592,7 +592,7 @@ mod tests {
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
         assert!(iter.next_n_back(5).is_none());
-        assert_eq!(iter.next_n_back(4).unwrap(), &[One, Zero, One, Zero]); // 5: 0101
+        assert_eq!(iter.next_n_back(4).unwrap(), [One, Zero, One, Zero]); // 5: 0101
         assert_eq!(iter.len(), 0); // 8765[]4FEDCB
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
@@ -600,8 +600,8 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n_back(1).is_none());
-        assert_eq!(iter.next_n(0).unwrap(), &[]);
-        assert_eq!(iter.next_n_back(0).unwrap(), &[]);
+        assert_eq!(iter.next_n(0).unwrap(), []);
+        assert_eq!(iter.next_n_back(0).unwrap(), []);
     }
 
     #[test]
@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(iter.len(), 28); // [76FEDCB]A
         assert_eq!(iter.next_primitive::<u8>().unwrap().read(), 0xCB);
         assert_eq!(iter.len(), 20); // [76FED]CBA
-        assert_eq!(iter.next_n(4).unwrap(), &[One, Zero, One, One]); // D: 1101
+        assert_eq!(iter.next_n(4).unwrap(), [One, Zero, One, One]); // D: 1101
         assert_eq!(iter.len(), 16); // [76FE]DCBA
         assert_eq!(iter.next().unwrap(), Zero); // E: 111[0]
         assert_eq!(iter.next().unwrap(), One); // E: 11[1]0
@@ -630,12 +630,12 @@ mod tests {
         assert_eq!(iter.len(), 4); // [7]6FEDCBA
         assert!(iter.next_primitive::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
-        assert_eq!(iter.next_n(4).unwrap(), &[One, One, One, Zero]); // 7: 0111
+        assert_eq!(iter.next_n(4).unwrap(), [One, One, One, Zero]); // 7: 0111
         assert_eq!(iter.len(), 0); // []76FEDCBA
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
-        assert_eq!(iter.next_n(0).unwrap(), &[]);
+        assert_eq!(iter.next_n(0).unwrap(), []);
     }
 
     #[test]
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(iter.len(), 36); // [87654FEDC]B
         assert_eq!(iter.next_primitive::<u16>().unwrap().read(), 0xFEDC);
         assert_eq!(iter.len(), 20); // [87654]FEDCB
-        assert_eq!(iter.next_n(4).unwrap(), &[Zero, Zero, One, Zero]); // 4: 0100
+        assert_eq!(iter.next_n(4).unwrap(), [Zero, Zero, One, Zero]); // 4: 0100
         assert_eq!(iter.len(), 16); // [8765]4FEDCB
         assert_eq!(iter.next_back().unwrap(), One); // 8: [1]000
         assert_eq!(iter.next_back().unwrap(), Zero); // 8: 1[0]00
@@ -666,7 +666,7 @@ mod tests {
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
         assert!(iter.next_n_back(5).is_none());
-        assert_eq!(iter.next_n_back(4).unwrap(), &[One, Zero, One, Zero]); // 5: 0101
+        assert_eq!(iter.next_n_back(4).unwrap(), [One, Zero, One, Zero]); // 5: 0101
         assert_eq!(iter.len(), 0); // 8765[]4FEDCB
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
@@ -674,8 +674,8 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n_back(1).is_none());
-        assert_eq!(iter.next_n(0).unwrap(), &[]);
-        assert_eq!(iter.next_n_back(0).unwrap(), &[]);
+        assert_eq!(iter.next_n(0).unwrap(), []);
+        assert_eq!(iter.next_n_back(0).unwrap(), []);
     }
 
     #[test]
@@ -696,7 +696,7 @@ mod tests {
             !value
         }); // [87654]0123]F
         assert_eq!(iter.len(), 20); // [87654]0123F
-        assert_eq!(iter.next_n(4).unwrap(), &[Zero, Zero, One, Zero]); // 4: 0100
+        assert_eq!(iter.next_n(4).unwrap(), [Zero, Zero, One, Zero]); // 4: 0100
         assert_eq!(iter.len(), 16); // [8765]40123F
         assert_eq!(iter.next_back().unwrap().read(), One); // 8: [1]000
         assert_eq!(iter.next_back().unwrap().read(), Zero); // 8: 1[0]00
@@ -709,7 +709,7 @@ mod tests {
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
         assert!(iter.next_n_back(5).is_none());
-        assert_eq!(iter.next_n_back(4).unwrap(), &[One, Zero, One, Zero]); // 5: 0101
+        assert_eq!(iter.next_n_back(4).unwrap(), [One, Zero, One, Zero]); // 5: 0101
         assert_eq!(iter.len(), 0); // 8765[]40123F
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
@@ -717,8 +717,8 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n_back(1).is_none());
-        assert_eq!(iter.next_n(0).unwrap(), &[]);
-        assert_eq!(iter.next_n_back(0).unwrap(), &[]);
+        assert_eq!(iter.next_n(0).unwrap(), []);
+        assert_eq!(iter.next_n_back(0).unwrap(), []);
         assert_eq!(memory, [0x23FA, 0x5401, 0x9876]); // In memory: 9876540123FA
     }
 
@@ -752,7 +752,7 @@ mod tests {
         assert_eq!(iter.len(), 0);
         assert!(iter.next().is_none());
         assert!(iter.next_back().is_none());
-        assert_eq!(iter.into_remainder().unwrap(), &[Zero, One, One, One]); // E: 1110
+        assert_eq!(iter.into_remainder().unwrap(), [Zero, One, One, One]); // E: 1110
     }
 
     #[test]
@@ -790,7 +790,7 @@ mod tests {
         assert_eq!(iter.len(), 0);
         assert!(iter.next().is_none());
         assert!(iter.next_back().is_none());
-        assert_eq!(iter.into_remainder().unwrap(), &[Zero, One, One, One]); // E: 1110
+        assert_eq!(iter.into_remainder().unwrap(), [Zero, One, One, One]); // E: 1110
     }
 
     #[test]
@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(iter.len(), 36); // 8[7654FEDCB]
         assert_eq!(iter.next_primitive::<u16>(), Some(0x7654));
         assert_eq!(iter.len(), 20); // 87654[FEDCB]
-        assert_eq!(iter.next_n(4).unwrap(), &[One, One, One, One]); // F: 1111
+        assert_eq!(iter.next_n(4).unwrap(), [One, One, One, One]); // F: 1111
         assert_eq!(iter.len(), 16); // 87654F[EDCB]
         assert_eq!(iter.next_back(), Some(One)); // B: 101[1]
         assert_eq!(iter.next_back(), Some(One)); // B: 10[1]1
@@ -853,7 +853,7 @@ mod tests {
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n(5).is_none());
         assert!(iter.next_n_back(5).is_none());
-        assert_eq!(iter.next_n_back(4).unwrap(), &[Zero, One, One, One]); // E: 1110
+        assert_eq!(iter.next_n_back(4).unwrap(), [Zero, One, One, One]); // E: 1110
         assert_eq!(iter.len(), 0); // 87654F[]EDCB
         assert!(iter.next().is_none());
         assert!(iter.next_primitive::<u8>().is_none());
@@ -861,7 +861,7 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n_back(1).is_none());
-        assert_eq!(iter.next_n(0).unwrap(), &[]);
-        assert_eq!(iter.next_n_back(0).unwrap(), &[]);
+        assert_eq!(iter.next_n(0).unwrap(), []);
+        assert_eq!(iter.next_n_back(0).unwrap(), []);
     }
 }

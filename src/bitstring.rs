@@ -553,7 +553,7 @@ mod tests {
 
         let str: &BitStr = string.as_ref();
 
-        assert_eq!(str, &[One, One, Zero, Zero, One, Zero, Zero, One]);
+        assert_eq!(str, [One, One, Zero, Zero, One, Zero, Zero, One]);
     }
 
     #[test]
@@ -562,7 +562,7 @@ mod tests {
 
         let str: &mut BitStr = string.as_mut();
 
-        assert_eq!(str, &[One, One, Zero, Zero, One, Zero, Zero, One]);
+        assert_eq!(str, [One, One, Zero, Zero, One, Zero, Zero, One]);
     }
 
     #[test]
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(string.len(), 20);
         assert_eq!(
             string.deref(),
-            &[
+            [
                 One, Zero, One, One, Zero, Zero, One, Zero, Zero, One, One, Zero, Zero, Zero, One,
                 One, Zero, One, One, Zero
             ]
@@ -710,7 +710,7 @@ mod tests {
         assert_eq!(iter.len(), 20); // [87654]FEDCB
         {
             let bit_string: Option<BitString> = iter.next_n(4);
-            assert_eq!(bit_string.unwrap().as_ref(), &[Zero, Zero, One, Zero]); // 4: 0100
+            assert_eq!(bit_string.unwrap().as_ref(), [Zero, Zero, One, Zero]); // 4: 0100
         }
         assert_eq!(iter.len(), 16); // [8765]4FEDCB
         assert_eq!(iter.next_back().unwrap(), One); // 8: [1]000
@@ -726,7 +726,7 @@ mod tests {
         assert!(iter.next_n_back(5).is_none());
         assert_eq!(
             iter.next_n_back(4).unwrap().as_ref(),
-            &[One, Zero, One, Zero]
+            [One, Zero, One, Zero]
         ); // 5: 0101
         assert_eq!(iter.len(), 0); // 8765[]4FEDCB
         assert!(iter.next().is_none());
@@ -735,8 +735,8 @@ mod tests {
         assert!(iter.next_back().is_none());
         assert!(iter.next_primitive_back::<u8>().is_none());
         assert!(iter.next_n_back(1).is_none());
-        assert_eq!(iter.next_n(0).unwrap().as_ref(), &[]);
-        assert_eq!(iter.next_n_back(0).unwrap().as_ref(), &[]);
+        assert_eq!(iter.next_n(0).unwrap().as_ref(), []);
+        assert_eq!(iter.next_n_back(0).unwrap().as_ref(), []);
     }
 
     #[test]
@@ -744,7 +744,7 @@ mod tests {
         macro_rules! assert_ok {
             ($str:literal, $expected_bits:expr) => {
                 let parsed = $str.parse::<BitString>().unwrap();
-                assert_eq!(parsed.as_ref(), &$expected_bits);
+                assert_eq!(parsed.as_ref(), $expected_bits);
             };
         }
 

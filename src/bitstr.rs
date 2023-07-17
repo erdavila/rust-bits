@@ -267,6 +267,41 @@ impl BitStr {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
     }
+
+    #[inline]
+    pub(crate) fn eq_slice(&self, other: &[BitValue]) -> bool {
+        if self.len() != other.len() {
+            return false;
+        };
+
+        struct Consumer<'a> {
+            other_iter: std::slice::Iter<'a, BitValue>,
+        }
+        impl<'a> ConsumeIterator<'a> for Consumer<'a> {
+            #[inline]
+            fn consume_primitive<P: BitsPrimitive>(&mut self, self_bits: P) -> Result<(), ()> {
+                let mut other_bits = CountedBits::new();
+
+                while other_bits.count < P::BIT_COUNT {
+                    other_bits.push_msb_value(*self.other_iter.next().unwrap());
+                }
+
+                (self_bits == other_bits.bits).then_some(()).ok_or(())
+            }
+
+            #[inline]
+            fn consume_remainder_bit(&mut self, self_value: BitValue) -> Result<(), ()> {
+                let other_value = self.other_iter.next().unwrap();
+                (self_value == *other_value).then_some(()).ok_or(())
+            }
+        }
+
+        let self_iter = self.iter();
+        let other_iter = other.iter();
+
+        let mut consumer = Consumer { other_iter };
+        consumer.consume_iterator(self_iter).is_ok()
+    }
 }
 
 #[inline]
@@ -425,47 +460,38 @@ impl PartialEq for BitStr {
     }
 }
 
-impl<const N: usize> PartialEq<[BitValue; N]> for BitStr {
+impl<const N: usize> PartialEq<[BitValue; N]> for &BitStr {
     #[inline]
     fn eq(&self, other: &[BitValue; N]) -> bool {
-        PartialEq::<[BitValue]>::eq(self, other)
+        self.eq_slice(other)
     }
 }
 
-impl PartialEq<[BitValue]> for BitStr {
+impl<const N: usize> PartialEq<[BitValue; N]> for &mut BitStr {
     #[inline]
-    fn eq(&self, other: &[BitValue]) -> bool {
-        if self.len() != other.len() {
-            return false;
-        };
+    fn eq(&self, other: &[BitValue; N]) -> bool {
+        self.eq_slice(other)
+    }
+}
 
-        struct Consumer<'a> {
-            other_iter: std::slice::Iter<'a, BitValue>,
-        }
-        impl<'a> ConsumeIterator<'a> for Consumer<'a> {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, self_bits: P) -> Result<(), ()> {
-                let mut other_bits = CountedBits::new();
+impl<const N: usize> PartialEq<&BitStr> for [BitValue; N] {
+    #[inline]
+    fn eq(&self, other: &&BitStr) -> bool {
+        *other == *self
+    }
+}
 
-                while other_bits.count < P::BIT_COUNT {
-                    other_bits.push_msb_value(*self.other_iter.next().unwrap());
-                }
+impl PartialEq<Vec<BitValue>> for &BitStr {
+    #[inline]
+    fn eq(&self, other: &Vec<BitValue>) -> bool {
+        self.eq_slice(other)
+    }
+}
 
-                (self_bits == other_bits.bits).then_some(()).ok_or(())
-            }
-
-            #[inline]
-            fn consume_remainder_bit(&mut self, self_value: BitValue) -> Result<(), ()> {
-                let other_value = self.other_iter.next().unwrap();
-                (self_value == *other_value).then_some(()).ok_or(())
-            }
-        }
-
-        let self_iter = self.iter();
-        let other_iter = other.iter();
-
-        let mut consumer = Consumer { other_iter };
-        consumer.consume_iterator(self_iter).is_ok()
+impl PartialEq<&BitStr> for Vec<BitValue> {
+    #[inline]
+    fn eq(&self, other: &&BitStr) -> bool {
+        *other == *self
     }
 }
 
@@ -764,26 +790,34 @@ mod tests {
         let memory: [u8; 3] = [0b10010011, 0b01100110, 0b01101100]; // In memory: 01101100_01100110_10010011
         let bit_str = &BitStr::new_ref(&memory)[3..21]; // In memory: 01100_01100110_10010
 
-        let bit_values = [
+        let array = [
             Zero, One, Zero, Zero, One, Zero, One, One, Zero, Zero, One, One, Zero, Zero, Zero,
             One, One, Zero,
         ];
-        let bit_values_ne_1 = {
-            let mut vals = bit_values;
+        let array_ne_1 = {
+            let mut vals = array;
             vals[0] = !vals[0];
             vals
         };
-        let bit_values_ne_2 = {
-            let mut vals = bit_values;
+        let array_ne_2 = {
+            let mut vals = array;
             let last_index = vals.len() - 1;
             vals[last_index] = !vals[last_index];
             vals
         };
 
-        assert!(bit_str == &bit_values);
-        assert!(bit_str != &bit_values_ne_1);
-        assert!(bit_str != &bit_values_ne_2);
-        assert!(bit_str != &bit_values[1..]);
-        assert!(bit_str != &bit_values[..(bit_values.len() - 1)]);
+        assert!(bit_str == array);
+        assert!(bit_str != array_ne_1);
+        assert!(bit_str != array_ne_2);
+        assert!(array == bit_str);
+        assert!(array_ne_1 != bit_str);
+        assert!(array_ne_2 != bit_str);
+
+        assert!(bit_str == array.to_vec());
+        assert!(bit_str != array_ne_1.to_vec());
+        assert!(bit_str != array_ne_2.to_vec());
+        assert!(array.to_vec() == bit_str);
+        assert!(array_ne_1.to_vec() != bit_str);
+        assert!(array_ne_2.to_vec() != bit_str);
     }
 }
