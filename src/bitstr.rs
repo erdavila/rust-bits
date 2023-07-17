@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{
@@ -428,35 +429,7 @@ trait ConsumeIterator<'a> {
 impl PartialEq for BitStr {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
-            return false;
-        };
-
-        struct Consumer<'a> {
-            other_iter: Iter<'a>,
-        }
-        impl<'a> ConsumeIterator<'a> for Consumer<'a> {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive + 'a>(
-                &mut self,
-                self_value: P,
-            ) -> Result<(), ()> {
-                let other_value = self.other_iter.next_primitive::<P>().unwrap();
-                (self_value == other_value).then_some(()).ok_or(())
-            }
-
-            #[inline]
-            fn consume_remainder_bit(&mut self, self_value: BitValue) -> Result<(), ()> {
-                let other_value = self.other_iter.next().unwrap();
-                (self_value == other_value).then_some(()).ok_or(())
-            }
-        }
-
-        let self_iter = self.iter();
-        let other_iter = other.iter();
-
-        let mut consumer = Consumer { other_iter };
-        consumer.consume_iterator(self_iter).is_ok()
+        (self.len() == other.len()) && self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -492,6 +465,69 @@ impl PartialEq<&BitStr> for Vec<BitValue> {
     #[inline]
     fn eq(&self, other: &&BitStr) -> bool {
         *other == *self
+    }
+}
+
+impl Ord for BitStr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let mut self_iter = self.iter().reverse();
+        let mut other_iter = other.iter().reverse();
+
+        macro_rules! compare {
+            ($stmt:tt, $type:ty) => {
+                $stmt self_iter.len() >= <$type>::BIT_COUNT && other_iter.len() >= <$type>::BIT_COUNT {
+                    let (Some(self_value), Some(other_value)) = (self_iter.next_primitive::<$type>(), other_iter.next_primitive::<$type>()) else {
+                        unreachable!()
+                    };
+                    let cmp = self_value.cmp(&other_value);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
+            };
+        }
+
+        compare!(while, u128);
+        compare!(if, u64);
+        compare!(if, u32);
+        compare!(if, u16);
+        compare!(if, u8);
+
+        loop {
+            match (self_iter.next(), other_iter.next()) {
+                (Some(self_value), Some(other_value)) => {
+                    let cmp = self_value.cmp(&other_value);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                    continue;
+                }
+                (Some(_), None) => return Ordering::Greater,
+                (None, Some(_)) => return Ordering::Less,
+                (None, None) => return Ordering::Equal,
+            }
+        }
+    }
+}
+
+impl PartialOrd for BitStr {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+
+impl PartialOrd<&mut BitStr> for &BitStr {
+    #[inline]
+    fn partial_cmp(&self, other: &&mut BitStr) -> Option<std::cmp::Ordering> {
+        Some(Ord::cmp(*self, other))
+    }
+}
+
+impl PartialOrd<&BitStr> for &mut BitStr {
+    #[inline]
+    fn partial_cmp(&self, other: &&BitStr) -> Option<std::cmp::Ordering> {
+        Some(Ord::cmp(*self, other))
     }
 }
 
@@ -819,5 +855,23 @@ mod tests {
         assert!(array.to_vec() == bit_str);
         assert!(array_ne_1.to_vec() != bit_str);
         assert!(array_ne_2.to_vec() != bit_str);
+    }
+
+    #[test]
+    fn ord() {
+        let value: [u8; 3] = [0xBB, 0x00, 0xBB];
+        let bit_str = BitStr::new_ref(&value); // In memory: BB00BB
+        let empty = BitStr::new_mut::<u8>(&mut []);
+        let zero = &BitStr::new_ref(&[0u8])[..1];
+        let one = &BitStr::new_ref(&[1u8])[..1];
+
+        assert!(!(bit_str < bit_str));
+        assert!(!(bit_str < BitStr::new_ref(&[0xBBu8, 0x00u8, 0xBBu8]))); // In memory: BB00BB (equal)
+        assert!(!(bit_str < (&BitStr::new_ref(&[0xBB00u16, 0xBB00u16])[8..]))); // In memory: BB00BB (equal, but u16)
+        assert!(bit_str < BitStr::new_ref(&[0xCCu8, 0x00u8, 0xBBu8])); // In memory: BB00CC (MSByte is equal but LSByte is larger)
+        assert!(bit_str < BitStr::new_ref(&[0xAAu8, 0x00u8, 0xCCu8])); // In memory: CC00AA (MSByte is larger but LSByte is smaller)
+        assert!(empty < zero); // "" < "0"
+        assert!(zero > empty); // "0" > ""
+        assert!(zero < one); // "0" < "1"
     }
 }

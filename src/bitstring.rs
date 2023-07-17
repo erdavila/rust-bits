@@ -261,6 +261,41 @@ impl<U: BitsPrimitive> PartialEq<BitString<U>> for Vec<BitValue> {
     }
 }
 
+impl<U: BitsPrimitive, U2: BitsPrimitive> PartialOrd<BitString<U2>> for BitString<U> {
+    #[inline]
+    fn partial_cmp(&self, other: &BitString<U2>) -> Option<std::cmp::Ordering> {
+        self.as_bit_str().partial_cmp(other.as_bit_str())
+    }
+}
+
+impl<U: BitsPrimitive> PartialOrd<&BitStr> for BitString<U> {
+    #[inline]
+    fn partial_cmp(&self, other: &&BitStr) -> Option<std::cmp::Ordering> {
+        self.as_bit_str().partial_cmp(other)
+    }
+}
+
+impl<U: BitsPrimitive> PartialOrd<&mut BitStr> for BitString<U> {
+    #[inline]
+    fn partial_cmp(&self, other: &&mut BitStr) -> Option<std::cmp::Ordering> {
+        self.as_bit_str().partial_cmp(other)
+    }
+}
+
+impl<U: BitsPrimitive> PartialOrd<BitString<U>> for &BitStr {
+    #[inline]
+    fn partial_cmp(&self, other: &BitString<U>) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&other.as_bit_str())
+    }
+}
+
+impl<U: BitsPrimitive> PartialOrd<BitString<U>> for &mut BitStr {
+    #[inline]
+    fn partial_cmp(&self, other: &BitString<U>) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&other.as_bit_str())
+    }
+}
+
 impl<U: BitsPrimitive> Hash for BitString<U> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -842,6 +877,37 @@ mod tests {
 
         assert!(vec![One, Zero] == bit_string_1);
         assert!(vec![Zero, One] != bit_string_1);
+    }
+
+    #[test]
+    fn ord() {
+        macro_rules! bitstring {
+            ($str:expr) => {
+                $str.parse::<BitString>().unwrap()
+            };
+            ($str:expr; $type:ty) => {
+                $str.parse::<BitString<$type>>().unwrap()
+            };
+        }
+
+        let bit_string = bitstring!("0xBB00BB");
+        let empty = BitString::new();
+        let zero = bitstring!("0");
+        let one = bitstring!("1");
+
+        assert!(!(bit_string < bit_string));
+        assert!(!(bit_string < bitstring!("0xBB00BB")));
+        assert!(!(bit_string < bitstring!("0xBB00BB"; u16))); // equal, but u16
+        assert!(bit_string < bitstring!("0xBB00CC")); // MSByte is equal but LSByte is larger
+        assert!(bit_string < bitstring!("0xCC00AA")); // MSByte is larger but LSByte is smaller
+        assert!(empty < zero); // "" < "0"
+        assert!(zero > empty); // "0" > ""
+        assert!(zero < one); // "0" < "1"
+
+        assert!(!(bit_string < bit_string.as_bit_str()));
+        assert!(!(bit_string < bit_string.clone().as_bit_str_mut()));
+        assert!(!(bit_string.as_bit_str() < bit_string));
+        assert!(!(bit_string.clone().as_bit_str_mut() < bit_string));
     }
 
     #[test]
