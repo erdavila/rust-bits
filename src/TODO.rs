@@ -106,6 +106,10 @@ fn accessing() {
     let bit: Option<&Primitive<u8>> = bit_str.get_primitive_ref::<u8>(index); // ... and other primitive types
     let bit: Option<&mut Primitive<u8>> = bit_str.get_primitive_mut::<u8>(index); // ... and other primitive types
 
+    let _: u8 = bit_str.numeric_value().get_lower_bits_primitive::<u8>(); // ... and other primitive types
+    assert_eq!(bit_string!("1011").numeric_value().get_lower_bits_primitive::<u8>(), 0b_0000_1011_u8); // ... and other primitive types
+    assert_eq!(bit_string!("1001_0000_1011").numeric_value().get_lower_bits_primitive::<u8>(), 0b_0000_1011_u8); // ... and other primitive types
+
     // Also mut variations!
     // May panic
     let begin: usize;
@@ -340,15 +344,19 @@ fn not() {
 }
 
 fn eq() {
-    let result: bool = lhs_bit_source == rhs_bit_source; // LEXICOGRAPHICAL comparison ("010" != "0010")
+    // LEXICOGRAPHICAL comparison ("010" != "0010")
+    let result: bool = lhs_bit_string_or_str == rhs_bit_string_or_str;
 
-    let result: bool = lhs_bit_source.num_eq(rhs_bit_source); // NUMERIC comparison ("010" == "0010")
+    // NUMERIC comparison ("010" == "0010")
+    let result: bool = lhs_bit_str.numeric_value() == rhs_bit_str.numeric_value();
 }
 
 fn ord() {
-    let result: Ordering = lhs_bit_source.cmp(rhs_bit_source); // LEXICOGRAPHICAL comparison ("010" > "0011")
+    // LEXICOGRAPHICAL comparison ("010" > "0011")
+    let result: bool = lhs_bit_string_or_str < rhs_bit_string_or_str;
 
-    let result: Ordering = lhs_bit_source.num_cmp(rhs_bit_source); // NUMERIC comparison ("010" < "0011")
+    // NUMERIC comparison ("010" < "0011")
+    let result: bool = lhs_bit_str.numeric_value() < rhs_bit_str.numeric_value();
 }
 
 fn shifting() {

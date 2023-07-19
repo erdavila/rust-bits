@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{
@@ -10,7 +10,8 @@ use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::refrepr::{
     BitPointer, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
 };
-use crate::utils::{CountedBits, Either};
+use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
+use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 mod fmt;
@@ -264,6 +265,75 @@ impl BitStr {
     }
 
     #[inline]
+    fn only_zeros(&self) -> bool {
+        self.ref_components().select({
+            struct Selector;
+            impl RefComponentsSelector for Selector {
+                type Output = bool;
+
+                fn select<U: BitsPrimitive>(
+                    self,
+                    components: TypedRefComponents<U>,
+                ) -> Self::Output {
+                    let regions = PrimitiveElementsRegions::new(
+                        components.bit_ptr.offset().value(),
+                        components.bit_count,
+                        U::BIT_COUNT,
+                    );
+
+                    let read = |index| unsafe { components.bit_ptr.elem_ptr().add(index).read() };
+
+                    match regions {
+                        PrimitiveElementsRegions::Multiple {
+                            lsb_element,
+                            full_elements,
+                            msb_element,
+                        } => {
+                            if let Some(lsb) = lsb_element {
+                                let mut bits = read(0) >> lsb.bit_offset;
+                                bits &= BitPattern::new_with_zeros().and_ones(lsb.bit_count).get();
+                                if bits != U::ZERO {
+                                    return false;
+                                }
+                            }
+
+                            if let Some(full) = full_elements {
+                                for index in full.indexes {
+                                    let bits = read(index);
+                                    if bits != U::ZERO {
+                                        return false;
+                                    }
+                                }
+                            }
+
+                            if let Some(msb) = msb_element {
+                                let mut bits = read(msb.index);
+                                bits &= BitPattern::new_with_zeros().and_ones(msb.bit_count).get();
+                                if bits != U::ZERO {
+                                    return false;
+                                }
+                            }
+                        }
+                        PrimitiveElementsRegions::Single {
+                            bit_offset,
+                            bit_count,
+                        } => {
+                            let mut bits = read(0) >> bit_offset;
+                            bits &= BitPattern::new_with_zeros().and_ones(bit_count).get();
+                            if bits != U::ZERO {
+                                return false;
+                            }
+                        }
+                    }
+
+                    true
+                }
+            }
+            Selector
+        })
+    }
+
+    #[inline]
     pub(crate) fn ref_components(&self) -> UntypedRefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
@@ -302,6 +372,11 @@ impl BitStr {
 
         let mut consumer = Consumer { other_iter };
         consumer.consume_iterator(self_iter).is_ok()
+    }
+
+    #[inline]
+    pub fn numeric_value(&self) -> NumericValue {
+        NumericValue(self)
     }
 }
 
@@ -625,6 +700,41 @@ impl Hash for BitStr {
     }
 }
 
+#[derive(Eq)]
+pub struct NumericValue<'a>(&'a BitStr);
+
+impl<'a> PartialEq for NumericValue<'a> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<'a> Ord for NumericValue<'a> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        let min_len = cmp::min(self.0.len(), other.0.len());
+
+        let (self_extra, self_common) = self.0.split_at(min_len);
+        let (other_extra, other_common) = other.0.split_at(min_len);
+
+        if !self_extra.only_zeros() {
+            Ordering::Greater
+        } else if !other_extra.only_zeros() {
+            Ordering::Less
+        } else {
+            self_common.cmp(other_common)
+        }
+    }
+}
+
+impl<'a> PartialOrd for NumericValue<'a> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::convert::identity;
@@ -943,5 +1053,30 @@ mod tests {
         assert!(empty < zero); // "" < "0"
         assert!(zero > empty); // "0" > ""
         assert!(zero < one); // "0" < "1"
+    }
+
+    #[test]
+    fn numeric_value_cmp() {
+        let bit_str_1 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8])[0..12]; // In memory: 0110_10010011
+        let bit_str_2 = BitStr::new_ref(&[0b10010011u8, 0b0110u8]); // In memory: 00000110_10010011
+        let bit_str_3 = BitStr::new_ref(&[0b00000110_10010011u16]); // In memory: 00000110_10010011
+        let bit_str_4 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
+        let bit_str_5 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
+        let bit_str_6 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
+        let bit_str_ne = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+
+        assert!(bit_str_1.numeric_value() == bit_str_1.numeric_value());
+        assert!(bit_str_1.numeric_value() == bit_str_2.numeric_value());
+        assert!(bit_str_1.numeric_value() == bit_str_3.numeric_value());
+        assert!(bit_str_1.numeric_value() == bit_str_4.numeric_value());
+        assert!(bit_str_1.numeric_value() == bit_str_5.numeric_value());
+        assert!(bit_str_1.numeric_value() == bit_str_6.numeric_value());
+        assert!(bit_str_1.numeric_value() < bit_str_ne.numeric_value());
+        assert!(bit_str_2.numeric_value() < bit_str_ne.numeric_value());
+        assert!(bit_str_3.numeric_value() < bit_str_ne.numeric_value());
+        assert!(bit_str_4.numeric_value() < bit_str_ne.numeric_value());
+        assert!(bit_str_5.numeric_value() < bit_str_ne.numeric_value());
+        assert!(bit_str_6.numeric_value() < bit_str_ne.numeric_value());
+        assert!(bit_str_ne.numeric_value() > bit_str_1.numeric_value());
     }
 }

@@ -138,6 +138,88 @@ impl<P: BitsPrimitive> Debug for CountedBits<P> {
     }
 }
 
+pub(crate) mod primitive_elements_regions {
+    use std::ops::Range;
+
+    #[derive(PartialEq, Eq, Debug)]
+    pub(crate) struct LsbElement {
+        pub(crate) bit_offset: usize,
+        pub(crate) bit_count: usize,
+    }
+
+    #[derive(PartialEq, Eq, Debug)]
+    pub(crate) struct FullElements {
+        pub(crate) indexes: Range<usize>,
+    }
+
+    #[derive(PartialEq, Eq, Debug)]
+    pub(crate) struct MsbElement {
+        pub(crate) index: usize,
+        pub(crate) bit_count: usize,
+    }
+
+    #[derive(PartialEq, Eq, Debug)]
+    pub(crate) enum PrimitiveElementsRegions {
+        Multiple {
+            lsb_element: Option<LsbElement>,
+            full_elements: Option<FullElements>,
+            msb_element: Option<MsbElement>,
+        },
+        Single {
+            bit_offset: usize,
+            bit_count: usize,
+        },
+    }
+
+    impl PrimitiveElementsRegions {
+        pub(crate) fn new(offset: usize, bit_count: usize, element_bit_count: usize) -> Self {
+            if bit_count == 0 {
+                Self::Multiple {
+                    lsb_element: None,
+                    full_elements: None,
+                    msb_element: None,
+                }
+            } else {
+                let start_offset = offset;
+                let end_offset = start_offset + bit_count;
+
+                if start_offset > 0 && end_offset < element_bit_count {
+                    Self::Single {
+                        bit_offset: start_offset,
+                        bit_count,
+                    }
+                } else {
+                    let lsb_element = (start_offset > 0).then_some(LsbElement {
+                        bit_offset: start_offset,
+                        bit_count: element_bit_count - start_offset,
+                    });
+
+                    let msb_elem_index = end_offset / element_bit_count;
+                    let msb_elem_bit_count = end_offset % element_bit_count;
+                    let msb_element = (msb_elem_bit_count > 0).then_some(MsbElement {
+                        index: msb_elem_index,
+                        bit_count: msb_elem_bit_count,
+                    });
+
+                    let full_elems_idxs_start = if lsb_element.is_some() { 1 } else { 0 };
+                    let full_elems_idxs_end = msb_elem_index;
+                    let full_elems_idxs_range = full_elems_idxs_start..full_elems_idxs_end;
+                    let full_elements =
+                        (!full_elems_idxs_range.is_empty()).then_some(FullElements {
+                            indexes: full_elems_idxs_range,
+                        });
+
+                    Self::Multiple {
+                        lsb_element,
+                        full_elements,
+                        msb_element,
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) struct BitPattern<P: BitsPrimitive>(P);
 
 impl<P: BitsPrimitive> BitPattern<P> {
@@ -208,6 +290,180 @@ mod tests {
         assert_eq!(required_elements_for_bit_count::<u8>(9), 2);
         assert_eq!(required_elements_for_bit_count::<u8>(16), 2);
         assert_eq!(required_elements_for_bit_count::<u8>(17), 3);
+    }
+
+    #[test]
+    fn primitive_elements_regions() {
+        use super::primitive_elements_regions::*;
+
+        // |--------|--------|--------[]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 0, 0),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: None,
+                msb_element: None,
+            }
+        );
+
+        // |--------|--------|---[#####]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 5, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: None,
+                msb_element: Some(MsbElement {
+                    index: 0,
+                    bit_count: 5
+                }),
+            }
+        );
+
+        // |--------|--------|[########]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 8, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: Some(FullElements { indexes: 0..1 }),
+                msb_element: None,
+            }
+        );
+
+        // |--------|---[#####|########]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 13, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: Some(FullElements { indexes: 0..1 }),
+                msb_element: Some(MsbElement {
+                    index: 1,
+                    bit_count: 5
+                }),
+            }
+        );
+
+        // |--------|[########|########]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 16, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: Some(FullElements { indexes: 0..2 }),
+                msb_element: None,
+            }
+        );
+
+        // |---[#####|########|########]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 21, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: Some(FullElements { indexes: 0..2 }),
+                msb_element: Some(MsbElement {
+                    index: 2,
+                    bit_count: 5
+                }),
+            }
+        );
+
+        // |[########|########|########]|
+        assert_eq!(
+            PrimitiveElementsRegions::new(0, 24, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: Some(FullElements { indexes: 0..3 }),
+                msb_element: None,
+            }
+        );
+
+        // |--------|--------|-----[]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 0, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: None,
+                full_elements: None,
+                msb_element: None,
+            }
+        );
+
+        // |--------|--------|---[##]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 2, 8),
+            PrimitiveElementsRegions::Single {
+                bit_offset: 3,
+                bit_count: 2
+            }
+        );
+
+        // |--------|--------|[#####]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 5, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: Some(LsbElement {
+                    bit_offset: 3,
+                    bit_count: 5
+                }),
+                full_elements: None,
+                msb_element: None,
+            }
+        );
+
+        // |--------|---[#####|#####]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 10, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: Some(LsbElement {
+                    bit_offset: 3,
+                    bit_count: 5
+                }),
+                full_elements: None,
+                msb_element: Some(MsbElement {
+                    index: 1,
+                    bit_count: 5
+                }),
+            }
+        );
+
+        // |--------|[########|#####]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 13, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: Some(LsbElement {
+                    bit_offset: 3,
+                    bit_count: 5
+                }),
+                full_elements: Some(FullElements { indexes: 1..2 }),
+                msb_element: None,
+            }
+        );
+
+        // |---[#####|########|#####]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 18, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: Some(LsbElement {
+                    bit_offset: 3,
+                    bit_count: 5
+                }),
+                full_elements: Some(FullElements { indexes: 1..2 }),
+                msb_element: Some(MsbElement {
+                    index: 2,
+                    bit_count: 5
+                }),
+            }
+        );
+
+        // |[########|########|#####]---|
+        assert_eq!(
+            PrimitiveElementsRegions::new(3, 21, 8),
+            PrimitiveElementsRegions::Multiple {
+                lsb_element: Some(LsbElement {
+                    bit_offset: 3,
+                    bit_count: 5
+                }),
+                full_elements: Some(FullElements { indexes: 1..3 }),
+                msb_element: None,
+            }
+        );
     }
 
     #[test]
