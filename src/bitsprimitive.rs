@@ -9,7 +9,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr, ShrAssign};
 /// It has implementations for all numeric unsigned types.
 pub trait BitsPrimitive
 where
-    Self: Sized + Copy + Eq + Hash + Default + Binary + LowerHex + UpperHex + Debug,
+    Self: Sized + Copy + Eq + Ord + Hash + Default + Binary + LowerHex + UpperHex + Debug,
     Self: BitAnd<Output = Self>,
     Self: BitAndAssign,
     Self: BitOrAssign,

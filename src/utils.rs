@@ -172,6 +172,11 @@ impl<P: BitsPrimitive> BitPattern<P> {
     }
 }
 
+pub(crate) enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::BitPattern;

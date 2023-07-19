@@ -133,4 +133,9 @@ mod tests {
         assert_binary_operation!(One ^ Zero == One, ^=);
         assert_binary_operation!(One ^ One == Zero, ^=);
     }
+
+    #[test]
+    fn cmp() {
+        assert!(Zero < One);
+    }
 }

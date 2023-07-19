@@ -6,11 +6,11 @@ use std::ops::{
     RangeToInclusive,
 };
 
-use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
+use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::refrepr::{
     BitPointer, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
 };
-use crate::utils::CountedBits;
+use crate::utils::{CountedBits, Either};
 use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 mod fmt;
@@ -426,6 +426,62 @@ trait ConsumeIterator<'a> {
     }
 }
 
+trait ConsumeIteratorPair<'a, I: BitIterator<'a>> {
+    type Error;
+
+    fn consume_primitive_pair<P: BitsPrimitive>(
+        &mut self,
+        left: I::PrimitiveItem<P>,
+        right: I::PrimitiveItem<P>,
+    ) -> Result<(), Self::Error>;
+
+    fn consume_remainder_bit_pair(
+        &mut self,
+        left: I::Item,
+        right: I::Item,
+    ) -> Result<(), Self::Error>;
+
+    fn consume_non_depleted_iterator(&mut self, iter: Either<I, I>) -> Result<(), Self::Error>;
+
+    fn consume_iterator_pair(
+        &mut self,
+        mut left_iter: I,
+        mut right_iter: I,
+    ) -> Result<(), Self::Error> {
+        macro_rules! consume {
+            ($stmt:tt, $type:ty) => {
+                $stmt left_iter.len() >= <$type>::BIT_COUNT && right_iter.len() >= <$type>::BIT_COUNT {
+                    let (Some(left_value), Some(right_value)) = (left_iter.next_primitive::<$type>(), right_iter.next_primitive::<$type>()) else {
+                        unreachable!();
+                    };
+                    self.consume_primitive_pair(left_value, right_value)?;
+                }
+            };
+        }
+
+        consume!(while, u128);
+        consume!(if, u64);
+        consume!(if, u32);
+        consume!(if, u16);
+        consume!(if, u8);
+
+        while left_iter.len() > 0 && right_iter.len() > 0 {
+            let (Some(left_bit), Some(right_bit)) = (left_iter.next(), right_iter.next()) else {
+                unreachable!();
+            };
+            self.consume_remainder_bit_pair(left_bit, right_bit)?;
+        }
+
+        if left_iter.len() > 0 {
+            self.consume_non_depleted_iterator(Either::Left(left_iter))
+        } else if right_iter.len() > 0 {
+            self.consume_non_depleted_iterator(Either::Right(right_iter))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl PartialEq for BitStr {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -470,43 +526,57 @@ impl PartialEq<&BitStr> for Vec<BitValue> {
 
 impl Ord for BitStr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let mut self_iter = self.iter().reverse();
-        let mut other_iter = other.iter().reverse();
-
-        macro_rules! compare {
-            ($stmt:tt, $type:ty) => {
-                $stmt self_iter.len() >= <$type>::BIT_COUNT && other_iter.len() >= <$type>::BIT_COUNT {
-                    let (Some(self_value), Some(other_value)) = (self_iter.next_primitive::<$type>(), other_iter.next_primitive::<$type>()) else {
-                        unreachable!()
-                    };
-                    let cmp = self_value.cmp(&other_value);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
+        struct Consumer;
+        impl Consumer {
+            #[inline]
+            fn cmp<T: Ord>(left: T, right: T) -> Result<(), Ordering> {
+                let cmp = left.cmp(&right);
+                if cmp != Ordering::Equal {
+                    Err(cmp)
+                } else {
+                    Ok(())
                 }
-            };
-        }
-
-        compare!(while, u128);
-        compare!(if, u64);
-        compare!(if, u32);
-        compare!(if, u16);
-        compare!(if, u8);
-
-        loop {
-            match (self_iter.next(), other_iter.next()) {
-                (Some(self_value), Some(other_value)) => {
-                    let cmp = self_value.cmp(&other_value);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                    continue;
-                }
-                (Some(_), None) => return Ordering::Greater,
-                (None, Some(_)) => return Ordering::Less,
-                (None, None) => return Ordering::Equal,
             }
         }
+        impl<'a> ConsumeIteratorPair<'a, ReverseIter<'a, Iter<'a>>> for Consumer {
+            type Error = Ordering;
+
+            #[inline]
+            fn consume_primitive_pair<P: BitsPrimitive>(
+                &mut self,
+                left: P,
+                right: P,
+            ) -> Result<(), Ordering> {
+                Self::cmp(left, right)
+            }
+
+            #[inline]
+            fn consume_remainder_bit_pair(
+                &mut self,
+                left: BitValue,
+                right: BitValue,
+            ) -> Result<(), Ordering> {
+                Self::cmp(left, right)
+            }
+
+            #[inline]
+            fn consume_non_depleted_iterator(
+                &mut self,
+                iter: Either<ReverseIter<'a, Iter<'a>>, ReverseIter<'a, Iter<'a>>>,
+            ) -> Result<(), Ordering> {
+                match iter {
+                    Either::Left(_) => Err(Ordering::Greater),
+                    Either::Right(_) => Err(Ordering::Less),
+                }
+            }
+        }
+
+        let left_iter = self.iter().reverse();
+        let right_iter = other.iter().reverse();
+        return match Consumer.consume_iterator_pair(left_iter, right_iter) {
+            Ok(()) => Ordering::Equal,
+            Err(ord) => ord,
+        };
     }
 }
 
