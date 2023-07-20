@@ -6,9 +6,11 @@ use std::ops::{
     RangeToInclusive,
 };
 
+use crate::copy_bits::copy_bits_ptr;
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::refrepr::{
-    BitPointer, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
+    BitPointer, Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents,
+    UntypedRefComponents,
 };
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
@@ -703,6 +705,35 @@ impl Hash for BitStr {
 #[derive(Eq)]
 pub struct NumericValue<'a>(&'a BitStr);
 
+impl<'a> NumericValue<'a> {
+    #[inline]
+    pub fn get_lower_bits_primitive<P: BitsPrimitive>(&self) -> P {
+        self.0.ref_components().select({
+            struct Selector<P>(PhantomData<P>);
+            impl<P: BitsPrimitive> RefComponentsSelector for Selector<P> {
+                type Output = P;
+
+                #[inline]
+                fn select<U: BitsPrimitive>(
+                    self,
+                    components: TypedRefComponents<U>,
+                ) -> Self::Output {
+                    let mut result = P::ZERO;
+
+                    let src = components.bit_ptr;
+                    let dst = BitPointer::new(TypedPointer::from(&mut result), Offset::new(0));
+                    let bit_count = cmp::min(P::BIT_COUNT, components.bit_count);
+                    unsafe { copy_bits_ptr(src, dst, bit_count) };
+
+                    result
+                }
+            }
+
+            Selector(PhantomData)
+        })
+    }
+}
+
 impl<'a> PartialEq for NumericValue<'a> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -1055,28 +1086,52 @@ mod tests {
         assert!(zero < one); // "0" < "1"
     }
 
-    #[test]
-    fn numeric_value_cmp() {
-        let bit_str_1 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8])[0..12]; // In memory: 0110_10010011
-        let bit_str_2 = BitStr::new_ref(&[0b10010011u8, 0b0110u8]); // In memory: 00000110_10010011
-        let bit_str_3 = BitStr::new_ref(&[0b00000110_10010011u16]); // In memory: 00000110_10010011
-        let bit_str_4 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
-        let bit_str_5 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
-        let bit_str_6 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
-        let bit_str_ne = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+    mod numeric_value {
+        use crate::BitStr;
 
-        assert!(bit_str_1.numeric_value() == bit_str_1.numeric_value());
-        assert!(bit_str_1.numeric_value() == bit_str_2.numeric_value());
-        assert!(bit_str_1.numeric_value() == bit_str_3.numeric_value());
-        assert!(bit_str_1.numeric_value() == bit_str_4.numeric_value());
-        assert!(bit_str_1.numeric_value() == bit_str_5.numeric_value());
-        assert!(bit_str_1.numeric_value() == bit_str_6.numeric_value());
-        assert!(bit_str_1.numeric_value() < bit_str_ne.numeric_value());
-        assert!(bit_str_2.numeric_value() < bit_str_ne.numeric_value());
-        assert!(bit_str_3.numeric_value() < bit_str_ne.numeric_value());
-        assert!(bit_str_4.numeric_value() < bit_str_ne.numeric_value());
-        assert!(bit_str_5.numeric_value() < bit_str_ne.numeric_value());
-        assert!(bit_str_6.numeric_value() < bit_str_ne.numeric_value());
-        assert!(bit_str_ne.numeric_value() > bit_str_1.numeric_value());
+        #[test]
+        fn cmp() {
+            let bit_str_1 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8])[0..12]; // In memory: 0110_10010011
+            let bit_str_2 = BitStr::new_ref(&[0b10010011u8, 0b0110u8]); // In memory: 00000110_10010011
+            let bit_str_3 = BitStr::new_ref(&[0b00000110_10010011u16]); // In memory: 00000110_10010011
+            let bit_str_4 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
+            let bit_str_5 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
+            let bit_str_6 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
+            let bit_str_ne = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+
+            assert!(bit_str_1.numeric_value() == bit_str_1.numeric_value());
+            assert!(bit_str_1.numeric_value() == bit_str_2.numeric_value());
+            assert!(bit_str_1.numeric_value() == bit_str_3.numeric_value());
+            assert!(bit_str_1.numeric_value() == bit_str_4.numeric_value());
+            assert!(bit_str_1.numeric_value() == bit_str_5.numeric_value());
+            assert!(bit_str_1.numeric_value() == bit_str_6.numeric_value());
+            assert!(bit_str_1.numeric_value() < bit_str_ne.numeric_value());
+            assert!(bit_str_2.numeric_value() < bit_str_ne.numeric_value());
+            assert!(bit_str_3.numeric_value() < bit_str_ne.numeric_value());
+            assert!(bit_str_4.numeric_value() < bit_str_ne.numeric_value());
+            assert!(bit_str_5.numeric_value() < bit_str_ne.numeric_value());
+            assert!(bit_str_6.numeric_value() < bit_str_ne.numeric_value());
+            assert!(bit_str_ne.numeric_value() > bit_str_1.numeric_value());
+        }
+
+        #[test]
+        fn get_lower_bits_primitive() {
+            let bit_str = &BitStr::new_ref(&[0b1100_1001_0011_10u16])[2..]; // In memory: 001100_10010011
+
+            assert_eq!(
+                bit_str.numeric_value().get_lower_bits_primitive::<u8>(),
+                0b10010011u8
+            );
+            assert_eq!(
+                bit_str[..4]
+                    .numeric_value()
+                    .get_lower_bits_primitive::<u8>(),
+                0b00000011u8
+            );
+            assert_eq!(
+                bit_str.numeric_value().get_lower_bits_primitive::<u16>(),
+                0b00001100_10010011u16
+            );
+        }
     }
 }
