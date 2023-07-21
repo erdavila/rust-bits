@@ -10,7 +10,7 @@ use linear_deque::LinearDeque;
 
 use crate::copy_bits::copy_bits_ptr;
 use crate::iter::BitIterator;
-use crate::refrepr::{BitPointer, Offset, RefRepr, TypedRefComponents};
+use crate::refrepr::{BitPointer, Offset, RefRepr, TypedPointer, TypedRefComponents};
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{required_primitive_elements_for_type, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
@@ -483,6 +483,7 @@ impl BitStringParseError {
 pub trait BitStringEnd<'a> {
     fn push<S: BitSource>(&mut self, source: S);
     fn pop(&mut self) -> Option<BitValue>;
+    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P>;
 }
 
 pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
@@ -548,6 +549,65 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
             } => pop_bit_value(bit_offset, bit_count),
         }
     }
+
+    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
+        (self.0.bit_count >= P::BIT_COUNT).then(|| {
+            let mut value = P::ZERO;
+            let src = BitPointer::new(TypedPointer::from(self.0.buffer.deref()), self.0.offset);
+            let dst = BitPointer::new_normalized(TypedPointer::from(&mut value), 0);
+            unsafe { copy_bits_ptr(src, dst, P::BIT_COUNT) };
+
+            let mut bits_to_discard = P::BIT_COUNT;
+            match self.0.primitive_elements_regions() {
+                PrimitiveElementsRegions::Multiple {
+                    lsb_element,
+                    full_elements,
+                    msb_element,
+                } => 'elem_discard: {
+                    if let Some(lsb) = lsb_element {
+                        if lsb.bit_count <= bits_to_discard {
+                            self.0.buffer.pop_front();
+                            bits_to_discard -= lsb.bit_count;
+                        } else {
+                            break 'elem_discard;
+                        }
+                    }
+
+                    if let Some(full) = full_elements {
+                        for _ in full.indexes {
+                            if U::BIT_COUNT <= bits_to_discard {
+                                self.0.buffer.pop_front();
+                                bits_to_discard -= U::BIT_COUNT;
+                            } else {
+                                break 'elem_discard;
+                            }
+                        }
+                    }
+
+                    if let Some(msb) = msb_element {
+                        if msb.bit_count == bits_to_discard {
+                            self.0.buffer.pop_front();
+                        } else {
+                            break 'elem_discard;
+                        }
+                    }
+                }
+                PrimitiveElementsRegions::Single {
+                    bit_offset: _,
+                    bit_count,
+                } => {
+                    if bit_count == bits_to_discard {
+                        self.0.buffer.pop_front();
+                    }
+                }
+            }
+
+            self.0.offset = Offset::new(self.0.offset.value() + P::BIT_COUNT);
+            self.0.bit_count -= P::BIT_COUNT;
+
+            value
+        })
+    }
 }
 
 pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
@@ -612,6 +672,67 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
                 bit_count,
             } => pop_bit_value(bit_offset, bit_count),
         }
+    }
+
+    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
+        (self.0.bit_count >= P::BIT_COUNT).then(|| {
+            let mut value = P::ZERO;
+            let src = BitPointer::new_normalized(
+                TypedPointer::from(self.0.buffer.deref()),
+                self.0.offset.value() + self.0.bit_count - P::BIT_COUNT,
+            );
+            let dst = BitPointer::new_normalized(TypedPointer::from(&mut value), 0);
+            unsafe { copy_bits_ptr(src, dst, P::BIT_COUNT) };
+
+            let mut bits_to_discard = P::BIT_COUNT;
+            match self.0.primitive_elements_regions() {
+                PrimitiveElementsRegions::Multiple {
+                    lsb_element,
+                    full_elements,
+                    msb_element,
+                } => 'elem_discard: {
+                    if let Some(msb) = msb_element {
+                        if msb.bit_count <= bits_to_discard {
+                            self.0.buffer.pop_back();
+                            bits_to_discard -= msb.bit_count;
+                        } else {
+                            break 'elem_discard;
+                        }
+                    }
+
+                    if let Some(full) = full_elements {
+                        for _ in full.indexes {
+                            if U::BIT_COUNT <= bits_to_discard {
+                                self.0.buffer.pop_back();
+                                bits_to_discard -= U::BIT_COUNT;
+                            } else {
+                                break 'elem_discard;
+                            }
+                        }
+                    }
+
+                    if let Some(lsb) = lsb_element {
+                        if lsb.bit_count == bits_to_discard {
+                            self.0.buffer.pop_back();
+                        } else {
+                            break 'elem_discard;
+                        }
+                    }
+                }
+                PrimitiveElementsRegions::Single {
+                    bit_offset: _,
+                    bit_count,
+                } => {
+                    if bit_count == bits_to_discard {
+                        self.0.buffer.pop_back();
+                    }
+                }
+            }
+
+            self.0.bit_count -= P::BIT_COUNT;
+
+            value
+        })
     }
 }
 
@@ -1023,6 +1144,319 @@ mod tests {
             assert_bitstring!(bit_string, bitstring!(""));
             assert_eq!(bit_string.lsb().pop(), None);
             assert_eq!(bit_string.msb().pop(), None);
+        }
+    }
+
+    mod pop_primitive {
+        use linear_deque::LinearDeque;
+
+        use crate::refrepr::Offset;
+        use crate::{BitString, BitStringEnd};
+
+        #[test]
+        fn lsb_pop_from_lsb_elem() {
+            // |##XXXX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDEF00u32]),
+                offset: Offset::new(8),
+                bit_count: 24,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xCDEF));
+            assert_bitstring!(bit_string, bitstring!("0xAB"));
+
+            // |XXXX----|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCD0000u32]),
+                offset: Offset::new(16),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn lsb_pop_from_full_elem() {
+            // |XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDu16]),
+                offset: Offset::new(0),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+
+            // |####XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0x89ABCDEFu32]),
+                offset: Offset::new(0),
+                bit_count: 32,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x89ABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x89AB"));
+
+            // |XXXX|XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xCDEFu16, 0x89ABu16]),
+                offset: Offset::new(0),
+                bit_count: 32,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x89ABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u32>(), Some(0x89ABCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn lsb_pop_from_msb_elem() {
+            // |--##XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDEFu32]),
+                offset: Offset::new(0),
+                bit_count: 24,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xCDEF));
+            assert_bitstring!(bit_string, bitstring!("0xAB"));
+
+            // |----XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDu32]),
+                offset: Offset::new(0),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn lsb_pop_from_multiple_elems() {
+            // |##XX|XXXX|XX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xEF00u16, 0xABCDu16, 0x6789u16]),
+                offset: Offset::new(8),
+                bit_count: 40,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x6789ABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u32>(), Some(0x89ABCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x67"));
+
+            // |-#XX|XXXX|XX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xEF00u16, 0xABCDu16, 0x789u16]),
+                offset: Offset::new(8),
+                bit_count: 36,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x789ABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u32>(), Some(0x89ABCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x7"));
+
+            // |--XX|XXXX|XX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xEF00u16, 0xABCDu16, 0x89u16]),
+                offset: Offset::new(8),
+                bit_count: 32,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x89ABCDEF"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u32>(), Some(0x89ABCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn lsb_pop_from_single_elem() {
+            // |-#XXXX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDE00u32]),
+                offset: Offset::new(8),
+                bit_count: 20,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCDE"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xBCDE));
+            assert_bitstring!(bit_string, bitstring!("0xA"));
+
+            // |--XXXX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCD00u32]),
+                offset: Offset::new(8),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.lsb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn lsb_pop_none() {
+            assert_eq!(bitstring!("").lsb().pop_primitive::<u8>(), None);
+            assert_eq!(bitstring!("1010011").lsb().pop_primitive::<u8>(), None);
+        }
+
+        #[test]
+        fn msb_pop_from_msb_elem() {
+            // |--XXXX##|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDEFu32]),
+                offset: Offset::new(0),
+                bit_count: 24,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0xEF"));
+
+            // |----XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDu32]),
+                offset: Offset::new(0),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn msb_pop_from_full_elem() {
+            // |XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDu16]),
+                offset: Offset::new(0),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+
+            // |XXXX####|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0x89ABCDEFu32]),
+                offset: Offset::new(0),
+                bit_count: 32,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x89ABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0x89AB));
+            assert_bitstring!(bit_string, bitstring!("0xCDEF"));
+
+            // |XXXX|XXXX|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xCDEFu16, 0x89ABu16]),
+                offset: Offset::new(0),
+                bit_count: 32,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x89ABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u32>(), Some(0x89ABCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn msb_pop_from_lsb_elem() {
+            // |XXXX##--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDEF00u32]),
+                offset: Offset::new(8),
+                bit_count: 24,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0xEF"));
+
+            // |XXXX----|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCD0000u32]),
+                offset: Offset::new(16),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn msb_pop_from_multiple_elems() {
+            // |--XX|XXXX|XX##|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xCDEFu16, 0x89ABu16, 0x67u16]),
+                offset: Offset::new(0),
+                bit_count: 40,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x6789ABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u32>(), Some(0x6789ABCD));
+            assert_bitstring!(bit_string, bitstring!("0xEF"));
+
+            // |--XX|XXXX|XX#-|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xDEF0u16, 0x9ABCu16, 0x78u16]),
+                offset: Offset::new(4),
+                bit_count: 36,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x789ABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u32>(), Some(0x789ABCDE));
+            assert_bitstring!(bit_string, bitstring!("0xF"));
+
+            // |--XX|XXXX|XX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xEF00u16, 0xABCDu16, 0x89u16]),
+                offset: Offset::new(8),
+                bit_count: 32,
+            };
+            assert_bitstring!(bit_string, bitstring!("0x89ABCDEF"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u32>(), Some(0x89ABCDEF));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn msb_pop_from_single_elem() {
+            // |--XXXX#-|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCDE0u32]),
+                offset: Offset::new(4),
+                bit_count: 20,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCDE"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0xE"));
+
+            // |--XXXX--|
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0xABCD00u32]),
+                offset: Offset::new(8),
+                bit_count: 16,
+            };
+            assert_bitstring!(bit_string, bitstring!("0xABCD"));
+
+            assert_eq!(bit_string.msb().pop_primitive::<u16>(), Some(0xABCD));
+            assert_bitstring!(bit_string, bitstring!("0x"));
+        }
+
+        #[test]
+        fn msb_pop_none() {
+            assert_eq!(bitstring!("").msb().pop_primitive::<u8>(), None);
+            assert_eq!(bitstring!("1010011").msb().pop_primitive::<u8>(), None);
         }
     }
 
