@@ -51,6 +51,8 @@ fn bit_string_construction() {
     let bits: Vec<BitValue>;
     let _: BitString = bits.iter().collect();
     let _: BitString = bits.into_iter().collect();
+
+    bit_string.to_underlying_type::<u8>(); // ... and other primitive types
 }
 
 fn bit_str_construction() {

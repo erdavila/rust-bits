@@ -1,7 +1,6 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
 use std::{cmp, mem};
 
-#[cfg(test)]
 use crate::refrepr::Offset;
 use crate::{BitValue, BitsPrimitive};
 
@@ -24,7 +23,6 @@ pub(crate) fn max_value_for_bit_count(bit_count: usize) -> usize {
     bit_count_to_values_count(bit_count) - 1
 }
 
-#[cfg(test)]
 #[inline]
 pub(crate) fn required_primitive_elements_typed<P: BitsPrimitive>(
     offset: Offset<P>,
