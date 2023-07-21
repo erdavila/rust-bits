@@ -487,77 +487,13 @@ pub trait BitStringEnd<'a> {
 }
 
 pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
-impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
-    fn push<S: BitSource>(&mut self, source: S) {
-        let pushed_bits_count = source.bit_count();
-        let space = self.0.offset.value();
+impl<'a, U: BitsPrimitive> BitStringLsbEnd<'a, U> {
+    fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer<U>) -> R) -> Option<R> {
+        (bit_count <= self.0.bit_count).then(|| {
+            let bit_ptr = BitPointer::new(TypedPointer::from(self.0.buffer.deref()), self.0.offset);
+            let value = f(bit_ptr);
 
-        let mut updated_offset = self.0.offset.value();
-        if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
-            let additional_elems =
-                required_primitive_elements_for_type::<U>(0, additional_elems_bit_count);
-            self.0
-                .buffer
-                .resize_at_front(self.0.buffer.len() + additional_elems, U::ZERO);
-            updated_offset += additional_elems * U::BIT_COUNT;
-        }
-        updated_offset -= pushed_bits_count;
-
-        self.0.offset = Offset::new(updated_offset);
-        unsafe { source.copy_bits_to(self.0.buffer.as_ref().into(), updated_offset) };
-        self.0.bit_count += pushed_bits_count;
-    }
-
-    fn pop(&mut self) -> Option<BitValue> {
-        let regions = self.0.primitive_elements_regions();
-
-        let mut pop_bit_value = |offset, bits_in_elem| {
-            let elem = self.0.buffer[0] >> offset;
-
-            if bits_in_elem == 1 {
-                self.0.buffer.pop_front();
-            }
-            self.0.offset = Offset::new(self.0.offset.value() + 1);
-            self.0.bit_count -= 1;
-
-            Some(BitValue::from(elem & U::ONE != U::ZERO))
-        };
-
-        match regions {
-            PrimitiveElementsRegions::Multiple {
-                lsb_element,
-                full_elements,
-                msb_element,
-            } => {
-                if let Some(lsb) = lsb_element {
-                    return pop_bit_value(lsb.bit_offset, lsb.bit_count);
-                }
-
-                if full_elements.is_some() {
-                    return pop_bit_value(0, U::BIT_COUNT);
-                }
-
-                if let Some(msb) = msb_element {
-                    return pop_bit_value(0, msb.bit_count);
-                }
-
-                None
-            }
-            PrimitiveElementsRegions::Single {
-                bit_offset,
-                bit_count,
-            } => pop_bit_value(bit_offset, bit_count),
-        }
-    }
-
-    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
-        (self.0.bit_count >= P::BIT_COUNT).then(|| {
-            let mut value = P::ZERO;
-            let src = BitPointer::new(TypedPointer::from(self.0.buffer.deref()), self.0.offset);
-            let dst = BitPointer::new_normalized(TypedPointer::from(&mut value), 0);
-            unsafe { copy_bits_ptr(src, dst, P::BIT_COUNT) };
-
-            let mut bits_to_discard = P::BIT_COUNT;
+            let mut bits_to_discard = bit_count;
             match self.0.primitive_elements_regions() {
                 PrimitiveElementsRegions::Multiple {
                     lsb_element,
@@ -602,89 +538,56 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
                 }
             }
 
-            self.0.offset = Offset::new(self.0.offset.value() + P::BIT_COUNT);
-            self.0.bit_count -= P::BIT_COUNT;
+            self.0.offset = Offset::new(self.0.offset.value() + bit_count);
+            self.0.bit_count -= bit_count;
 
             value
         })
     }
 }
-
-pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
-impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
+impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
     fn push<S: BitSource>(&mut self, source: S) {
         let pushed_bits_count = source.bit_count();
-        let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset.value() - self.0.len();
+        let space = self.0.offset.value();
 
+        let mut updated_offset = self.0.offset.value();
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
             let additional_elems =
                 required_primitive_elements_for_type::<U>(0, additional_elems_bit_count);
             self.0
                 .buffer
-                .resize_at_back(self.0.buffer.len() + additional_elems, U::ZERO);
+                .resize_at_front(self.0.buffer.len() + additional_elems, U::ZERO);
+            updated_offset += additional_elems * U::BIT_COUNT;
         }
+        updated_offset -= pushed_bits_count;
 
-        unsafe {
-            source.copy_bits_to(
-                self.0.buffer.as_ref().into(),
-                self.0.offset.value() + self.0.bit_count,
-            )
-        };
+        self.0.offset = Offset::new(updated_offset);
+        unsafe { source.copy_bits_to(self.0.buffer.as_ref().into(), updated_offset) };
         self.0.bit_count += pushed_bits_count;
     }
 
+    #[inline]
     fn pop(&mut self) -> Option<BitValue> {
-        let regions = self.0.primitive_elements_regions();
-
-        let mut pop_bit_value = |offset, bits_in_elem| {
-            let elem = self.0.buffer[self.0.buffer.len() - 1] >> (offset + bits_in_elem - 1);
-
-            if bits_in_elem == 1 {
-                self.0.buffer.pop_back();
-            }
-            self.0.bit_count -= 1;
-
-            Some(BitValue::from(elem & U::ONE != U::ZERO))
-        };
-
-        match regions {
-            PrimitiveElementsRegions::Multiple {
-                lsb_element,
-                full_elements,
-                msb_element,
-            } => {
-                if let Some(msb) = msb_element {
-                    return pop_bit_value(0, msb.bit_count);
-                }
-
-                if full_elements.is_some() {
-                    return pop_bit_value(0, U::BIT_COUNT);
-                }
-
-                if let Some(lsb) = lsb_element {
-                    return pop_bit_value(lsb.bit_offset, lsb.bit_count);
-                }
-
-                None
-            }
-            PrimitiveElementsRegions::Single {
-                bit_offset,
-                bit_count,
-            } => pop_bit_value(bit_offset, bit_count),
-        }
+        self.pop_bits(1, get_bit_value_from_bit_str)
     }
 
+    #[inline]
     fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
-        (self.0.bit_count >= P::BIT_COUNT).then(|| {
-            let mut value = P::ZERO;
-            let src = BitPointer::new_normalized(
-                TypedPointer::from(self.0.buffer.deref()),
-                self.0.offset.value() + self.0.bit_count - P::BIT_COUNT,
-            );
-            let dst = BitPointer::new_normalized(TypedPointer::from(&mut value), 0);
-            unsafe { copy_bits_ptr(src, dst, P::BIT_COUNT) };
+        self.pop_bits(P::BIT_COUNT, get_primitive_from_bit_str)
+    }
+}
 
-            let mut bits_to_discard = P::BIT_COUNT;
+pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
+impl<'a, U: BitsPrimitive> BitStringMsbEnd<'a, U> {
+    fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer<U>) -> R) -> Option<R> {
+        (bit_count <= self.0.bit_count).then(|| {
+            let bit_ptr = BitPointer::new_normalized(
+                TypedPointer::from(self.0.buffer.deref()),
+                self.0.offset.value() + self.0.bit_count - bit_count,
+            );
+            let value = f(bit_ptr);
+
+            let mut bits_to_discard = bit_count;
             match self.0.primitive_elements_regions() {
                 PrimitiveElementsRegions::Multiple {
                     lsb_element,
@@ -724,16 +627,63 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
                     bit_count,
                 } => {
                     if bit_count == bits_to_discard {
-                        self.0.buffer.pop_back();
+                        self.0.buffer.pop_front();
                     }
                 }
             }
 
-            self.0.bit_count -= P::BIT_COUNT;
+            self.0.bit_count -= bit_count;
 
             value
         })
     }
+}
+impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
+    fn push<S: BitSource>(&mut self, source: S) {
+        let pushed_bits_count = source.bit_count();
+        let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset.value() - self.0.len();
+
+        if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
+            let additional_elems =
+                required_primitive_elements_for_type::<U>(0, additional_elems_bit_count);
+            self.0
+                .buffer
+                .resize_at_back(self.0.buffer.len() + additional_elems, U::ZERO);
+        }
+
+        unsafe {
+            source.copy_bits_to(
+                self.0.buffer.as_ref().into(),
+                self.0.offset.value() + self.0.bit_count,
+            )
+        };
+        self.0.bit_count += pushed_bits_count;
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<BitValue> {
+        self.pop_bits(1, get_bit_value_from_bit_str)
+    }
+
+    #[inline]
+    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
+        self.pop_bits(P::BIT_COUNT, get_primitive_from_bit_str)
+    }
+}
+
+#[inline]
+fn get_bit_value_from_bit_str<U: BitsPrimitive>(bit_ptr: BitPointer<U>) -> BitValue {
+    let accessor = BitAccessor::new(bit_ptr);
+    accessor.get()
+}
+
+#[inline]
+fn get_primitive_from_bit_str<P: BitsPrimitive, U: BitsPrimitive>(bit_ptr: BitPointer<U>) -> P {
+    let mut value = P::ZERO;
+    let src = bit_ptr;
+    let dst = BitPointer::new_normalized(TypedPointer::from(&mut value), 0);
+    unsafe { copy_bits_ptr(src, dst, P::BIT_COUNT) };
+    value
 }
 
 pub struct IntoIter<U> {
