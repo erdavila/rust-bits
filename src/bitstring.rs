@@ -2,6 +2,7 @@ use std::borrow::{Borrow, BorrowMut};
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::hash::Hash;
 use std::iter::FusedIterator;
+use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::slice;
 use std::str::FromStr;
@@ -487,6 +488,20 @@ pub trait BitStringEnd<'a, U: BitsPrimitive> {
     fn pop(&mut self) -> Option<BitValue>;
     fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P>;
     fn pop_n(&mut self, bit_count: usize) -> Option<BitString<U>>;
+
+    #[inline]
+    fn pop_up_to(&mut self, bit_count: usize) -> BitString<U> {
+        match self.pop_n(bit_count) {
+            Some(bit_string) => bit_string,
+            None => {
+                let mut bit_string = BitString::new_with_underlying_type();
+                mem::swap(self.bit_string(), &mut bit_string);
+                bit_string
+            }
+        }
+    }
+
+    fn bit_string(&mut self) -> &mut BitString<U>;
 }
 
 pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
@@ -582,6 +597,11 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a, U> for BitStringLsbEnd<'a, U> {
     #[inline]
     fn pop_n(&mut self, bit_count: usize) -> Option<BitString<U>> {
         self.pop_bits(bit_count, get_bit_string_from_bit_str)
+    }
+
+    #[inline]
+    fn bit_string(&mut self) -> &mut BitString<U> {
+        self.0
     }
 }
 
@@ -681,6 +701,11 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a, U> for BitStringMsbEnd<'a, U> {
     #[inline]
     fn pop_n(&mut self, bit_count: usize) -> Option<BitString<U>> {
         self.pop_bits(bit_count, get_bit_string_from_bit_str)
+    }
+
+    #[inline]
+    fn bit_string(&mut self) -> &mut BitString<U> {
+        self.0
     }
 }
 
@@ -1764,6 +1789,40 @@ mod tests {
         fn msb_pop_none() {
             assert_eq!(bitstring!("").msb().pop_n(8), None);
             assert_eq!(bitstring!("1010011").msb().pop_n(8), None);
+        }
+    }
+
+    mod pop_up_to {
+        use crate::BitStringEnd;
+
+        #[test]
+        fn lsb_pop() {
+            let mut bit_string = bitstring!("1100");
+            assert_bitstring!(bit_string.lsb().pop_up_to(3), bitstring!("100"));
+            assert_bitstring!(bit_string, bitstring!("1"));
+
+            let mut bit_string = bitstring!("1100");
+            assert_bitstring!(bit_string.lsb().pop_up_to(4), bitstring!("1100"));
+            assert_bitstring!(bit_string, bitstring!(""));
+
+            let mut bit_string = bitstring!("1100");
+            assert_bitstring!(bit_string.lsb().pop_up_to(5), bitstring!("1100"));
+            assert_bitstring!(bit_string, bitstring!(""));
+        }
+
+        #[test]
+        fn msb_pop() {
+            let mut bit_string = bitstring!("1100");
+            assert_bitstring!(bit_string.msb().pop_up_to(3), bitstring!("110"));
+            assert_bitstring!(bit_string, bitstring!("0"));
+
+            let mut bit_string = bitstring!("1100");
+            assert_bitstring!(bit_string.msb().pop_up_to(4), bitstring!("1100"));
+            assert_bitstring!(bit_string, bitstring!(""));
+
+            let mut bit_string = bitstring!("1100");
+            assert_bitstring!(bit_string.msb().pop_up_to(5), bitstring!("1100"));
+            assert_bitstring!(bit_string, bitstring!(""));
         }
     }
 
