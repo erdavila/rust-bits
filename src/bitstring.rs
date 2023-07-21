@@ -1,3 +1,4 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::hash::Hash;
 use std::iter::FusedIterator;
@@ -163,6 +164,20 @@ impl<U: BitsPrimitive> AsRef<BitStr> for BitString<U> {
 impl<U: BitsPrimitive> AsMut<BitStr> for BitString<U> {
     #[inline]
     fn as_mut(&mut self) -> &mut BitStr {
+        self.as_bit_str_mut()
+    }
+}
+
+impl<U: BitsPrimitive> Borrow<BitStr> for BitString<U> {
+    #[inline]
+    fn borrow(&self) -> &BitStr {
+        self.as_bit_str()
+    }
+}
+
+impl<U: BitsPrimitive> BorrowMut<BitStr> for BitString<U> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut BitStr {
         self.as_bit_str_mut()
     }
 }
@@ -625,11 +640,21 @@ struct IntoIterNextItemParams<U: BitsPrimitive> {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::{Borrow, BorrowMut};
     use std::ops::Deref;
 
     use crate::iter::BitIterator;
     use crate::BitValue::{One, Zero};
     use crate::{BitStr, BitString, BitStringEnd};
+
+    macro_rules! bitstring {
+        ($str:expr) => {
+            $str.parse::<BitString>().unwrap()
+        };
+        ($str:expr; $type:ty) => {
+            $str.parse::<BitString<$type>>().unwrap()
+        };
+    }
 
     #[test]
     fn new() {
@@ -664,6 +689,18 @@ mod tests {
         let str: &mut BitStr = string.as_mut();
 
         assert_eq!(str, [One, One, Zero, Zero, One, Zero, Zero, One]);
+    }
+
+    #[test]
+    fn borrow() {
+        let mut bit_string = bitstring!("10010011");
+
+        let bit_str_mut: &mut BitStr = bit_string.borrow_mut();
+        bit_str_mut[3].write(One);
+        bit_str_mut[4].write(Zero);
+        let bit_str: &BitStr = bit_string.borrow();
+
+        assert_eq!(bit_str, BitStr::new_ref(&[0b10001011u8]));
     }
 
     #[test]
@@ -881,15 +918,6 @@ mod tests {
 
     #[test]
     fn ord() {
-        macro_rules! bitstring {
-            ($str:expr) => {
-                $str.parse::<BitString>().unwrap()
-            };
-            ($str:expr; $type:ty) => {
-                $str.parse::<BitString<$type>>().unwrap()
-            };
-        }
-
         let bit_string = bitstring!("0xBB00BB");
         let empty = BitString::new();
         let zero = bitstring!("0");

@@ -14,7 +14,7 @@ use crate::refrepr::{
 };
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
-use crate::{Bit, BitAccessor, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
+use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 mod fmt;
 
@@ -702,6 +702,15 @@ impl Hash for BitStr {
     }
 }
 
+impl ToOwned for BitStr {
+    type Owned = BitString;
+
+    #[inline]
+    fn to_owned(&self) -> Self::Owned {
+        self.into()
+    }
+}
+
 #[derive(Eq)]
 pub struct NumericValue<'a>(&'a BitStr);
 
@@ -774,7 +783,7 @@ mod tests {
 
     use crate::refrepr::RefRepr;
     use crate::BitValue::{One, Zero};
-    use crate::{Bit, BitStr, BitsPrimitive, Primitive};
+    use crate::{Bit, BitStr, BitString, BitsPrimitive, Primitive};
 
     #[test]
     fn new_ref() {
@@ -1133,5 +1142,14 @@ mod tests {
                 0b00001100_10010011u16
             );
         }
+    }
+
+    #[test]
+    fn to_owned() {
+        let bit_str = &BitStr::new_ref(&[0b10010011u8])[1..7]; // In memory: 001001
+
+        let bit_string: BitString = bit_str.to_owned();
+
+        assert_eq!(bit_string, "001001".parse::<BitString>().unwrap());
     }
 }
