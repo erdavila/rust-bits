@@ -145,12 +145,12 @@ fn removing() {
     let begin: usize;
     let end: usize;
     let removed: Option<BitValue> = bit_string.remove(index);
-    let removed: Option<u8> = bit_string.remove(index); // ... and other primitive types
+    let removed: Option<u8> = bit_string.remove_primitive(index); // ... and other primitive types
     let removed: Option<BitString> = bit_string.remove_n(begin..end);
 
     let count: usize;
-    let popped: Option<BitValue> = bit_string.lsb().pop::<BitValue>();
-    let popped: Option<u8> = bit_string.lsb().pop::<u8>(); // ... and other primitive types
+    let popped: Option<BitValue> = bit_string.lsb().pop();
+    let popped: Option<u8> = bit_string.lsb().pop_primitive::<u8>(); // ... and other primitive types
     let popped: Option<BitString> = bit_string.lsb().pop_n(count);
     let popped: BitString = bit_string.lsb().pop_up_to(count);
 

@@ -11,7 +11,8 @@ use linear_deque::LinearDeque;
 use crate::copy_bits::copy_bits_ptr;
 use crate::iter::BitIterator;
 use crate::refrepr::{BitPointer, Offset, RefRepr, TypedRefComponents};
-use crate::utils::{required_elements_for_bit_count, CountedBits};
+use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
+use crate::utils::{required_primitive_elements_for_type, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone)]
@@ -41,7 +42,7 @@ impl<U: BitsPrimitive> BitString<U> {
     #[inline]
     fn from_with_underlying_type<S: BitSource>(source: S) -> Self {
         let bit_count = source.bit_count();
-        let buffer_elems = required_elements_for_bit_count::<U>(bit_count);
+        let buffer_elems = required_primitive_elements_for_type::<U>(0, bit_count);
 
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, U::ZERO);
@@ -125,6 +126,11 @@ impl<U: BitsPrimitive> BitString<U> {
         };
 
         components.encode()
+    }
+
+    #[inline]
+    fn primitive_elements_regions(&self) -> PrimitiveElementsRegions {
+        PrimitiveElementsRegions::new(self.offset.value(), self.bit_count, U::BIT_COUNT)
     }
 
     #[inline]
@@ -476,6 +482,7 @@ impl BitStringParseError {
 
 pub trait BitStringEnd<'a> {
     fn push<S: BitSource>(&mut self, source: S);
+    fn pop(&mut self) -> Option<BitValue>;
 }
 
 pub struct BitStringLsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
@@ -486,7 +493,8 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
 
         let mut updated_offset = self.0.offset.value();
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
-            let additional_elems = required_elements_for_bit_count::<U>(additional_elems_bit_count);
+            let additional_elems =
+                required_primitive_elements_for_type::<U>(0, additional_elems_bit_count);
             self.0
                 .buffer
                 .resize_at_front(self.0.buffer.len() + additional_elems, U::ZERO);
@@ -498,6 +506,48 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringLsbEnd<'a, U> {
         unsafe { source.copy_bits_to(self.0.buffer.as_ref().into(), updated_offset) };
         self.0.bit_count += pushed_bits_count;
     }
+
+    fn pop(&mut self) -> Option<BitValue> {
+        let regions = self.0.primitive_elements_regions();
+
+        let mut pop_bit_value = |offset, bits_in_elem| {
+            let elem = self.0.buffer[0] >> offset;
+
+            if bits_in_elem == 1 {
+                self.0.buffer.pop_front();
+            }
+            self.0.offset = Offset::new(self.0.offset.value() + 1);
+            self.0.bit_count -= 1;
+
+            Some(BitValue::from(elem & U::ONE != U::ZERO))
+        };
+
+        match regions {
+            PrimitiveElementsRegions::Multiple {
+                lsb_element,
+                full_elements,
+                msb_element,
+            } => {
+                if let Some(lsb) = lsb_element {
+                    return pop_bit_value(lsb.bit_offset, lsb.bit_count);
+                }
+
+                if full_elements.is_some() {
+                    return pop_bit_value(0, U::BIT_COUNT);
+                }
+
+                if let Some(msb) = msb_element {
+                    return pop_bit_value(0, msb.bit_count);
+                }
+
+                None
+            }
+            PrimitiveElementsRegions::Single {
+                bit_offset,
+                bit_count,
+            } => pop_bit_value(bit_offset, bit_count),
+        }
+    }
 }
 
 pub struct BitStringMsbEnd<'a, U: BitsPrimitive>(&'a mut BitString<U>);
@@ -507,7 +557,8 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
         let space = self.0.buffer.len() * U::BIT_COUNT - self.0.offset.value() - self.0.len();
 
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
-            let additional_elems = required_elements_for_bit_count::<U>(additional_elems_bit_count);
+            let additional_elems =
+                required_primitive_elements_for_type::<U>(0, additional_elems_bit_count);
             self.0
                 .buffer
                 .resize_at_back(self.0.buffer.len() + additional_elems, U::ZERO);
@@ -520,6 +571,47 @@ impl<'a, U: BitsPrimitive> BitStringEnd<'a> for BitStringMsbEnd<'a, U> {
             )
         };
         self.0.bit_count += pushed_bits_count;
+    }
+
+    fn pop(&mut self) -> Option<BitValue> {
+        let regions = self.0.primitive_elements_regions();
+
+        let mut pop_bit_value = |offset, bits_in_elem| {
+            let elem = self.0.buffer[self.0.buffer.len() - 1] >> (offset + bits_in_elem - 1);
+
+            if bits_in_elem == 1 {
+                self.0.buffer.pop_back();
+            }
+            self.0.bit_count -= 1;
+
+            Some(BitValue::from(elem & U::ONE != U::ZERO))
+        };
+
+        match regions {
+            PrimitiveElementsRegions::Multiple {
+                lsb_element,
+                full_elements,
+                msb_element,
+            } => {
+                if let Some(msb) = msb_element {
+                    return pop_bit_value(0, msb.bit_count);
+                }
+
+                if full_elements.is_some() {
+                    return pop_bit_value(0, U::BIT_COUNT);
+                }
+
+                if let Some(lsb) = lsb_element {
+                    return pop_bit_value(lsb.bit_offset, lsb.bit_count);
+                }
+
+                None
+            }
+            PrimitiveElementsRegions::Single {
+                bit_offset,
+                bit_count,
+            } => pop_bit_value(bit_offset, bit_count),
+        }
     }
 }
 
@@ -568,7 +660,7 @@ impl<U: BitsPrimitive> IntoIter<U> {
 
     #[inline]
     fn get_slice(params: IntoIterNextItemParams<U>) -> BitString<U> {
-        let buffer_elems = required_elements_for_bit_count::<U>(params.bit_count);
+        let buffer_elems = required_primitive_elements_for_type::<U>(0, params.bit_count);
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, U::ZERO);
 
@@ -649,11 +741,25 @@ mod tests {
 
     macro_rules! bitstring {
         ($str:expr) => {
-            $str.parse::<BitString>().unwrap()
+            $str.parse::<$crate::BitString>().unwrap()
         };
         ($str:expr; $type:ty) => {
-            $str.parse::<BitString<$type>>().unwrap()
+            $str.parse::<$crate::BitString<$type>>().unwrap()
         };
+    }
+
+    macro_rules! assert_bitstring {
+        ($value:expr, $expected:expr) => {{
+            let bit_string = &$value;
+            assert_eq!(
+                bit_string.buffer.len(),
+                $crate::utils::required_primitive_elements_typed(
+                    bit_string.offset,
+                    bit_string.bit_count
+                )
+            );
+            assert_eq!(*bit_string, $expected);
+        }};
     }
 
     #[test]
@@ -722,6 +828,202 @@ mod tests {
                 One, Zero, One, One, Zero
             ]
         );
+    }
+
+    mod pop {
+        use linear_deque::LinearDeque;
+
+        use crate::refrepr::Offset;
+        use crate::BitValue::{One, Zero};
+        use crate::{BitString, BitStringEnd};
+
+        #[test]
+        fn lsb_pop_from_lsb_elem() {
+            // ------10|101-----
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b10100000u8, 0b10u8]),
+                offset: Offset::new(5),
+                bit_count: 5,
+            };
+            assert_bitstring!(bit_string, bitstring!("10101"));
+
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("1010"));
+            assert_eq!(bit_string.lsb().pop(), Some(Zero));
+            assert_bitstring!(bit_string, bitstring!("101"));
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("10"));
+        }
+
+        #[test]
+        fn lsb_pop_from_full_elem() {
+            // 10010011
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b10010011u8]),
+                offset: Offset::new(0),
+                bit_count: 8,
+            };
+            assert_bitstring!(bit_string, bitstring!("10010011"));
+
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("1001001"));
+        }
+
+        #[test]
+        fn lsb_pop_from_msb_elem() {
+            // -----101
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b101u8]),
+                offset: Offset::new(0),
+                bit_count: 3,
+            };
+            assert_bitstring!(bit_string, bitstring!("101"));
+
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("10"));
+
+            // -------1
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([1u8]),
+                offset: Offset::new(0),
+                bit_count: 1,
+            };
+            assert_bitstring!(bit_string, bitstring!("1"));
+
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!(""));
+        }
+
+        #[test]
+        fn lsb_pop_from_single_elem() {
+            // ---101--
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b10100u8]),
+                offset: Offset::new(2),
+                bit_count: 3,
+            };
+            assert_bitstring!(bit_string, bitstring!("101"));
+
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("10"));
+            assert_eq!(bit_string.lsb().pop(), Some(Zero));
+            assert_bitstring!(bit_string, bitstring!("1"));
+            assert_eq!(bit_string.lsb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!(""));
+        }
+
+        #[test]
+        fn lsb_pop_empty() {
+            let mut bit_string = BitString::new();
+
+            assert_eq!(bit_string.lsb().pop(), None);
+        }
+
+        #[test]
+        fn msb_pop_from_msb_elem() {
+            // -----101|01------
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b01000000u8, 0b101u8]),
+                offset: Offset::new(6),
+                bit_count: 5,
+            };
+            assert_bitstring!(bit_string, bitstring!("10101"));
+
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("0101"));
+            assert_eq!(bit_string.msb().pop(), Some(Zero));
+            assert_bitstring!(bit_string, bitstring!("101"));
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("01"));
+        }
+
+        #[test]
+        fn msb_pop_from_full_elem() {
+            // 10010011
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b10010011u8]),
+                offset: Offset::new(0),
+                bit_count: 8,
+            };
+            assert_bitstring!(bit_string, bitstring!("10010011"));
+
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("0010011"));
+        }
+
+        #[test]
+        fn msb_pop_from_lsb_elem() {
+            // 101-----
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b10100000u8]),
+                offset: Offset::new(5),
+                bit_count: 3,
+            };
+            assert_bitstring!(bit_string, bitstring!("101"));
+
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("01"));
+
+            // 1-------
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b10000000u8]),
+                offset: Offset::new(7),
+                bit_count: 1,
+            };
+            assert_bitstring!(bit_string, bitstring!("1"));
+
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!(""));
+        }
+
+        #[test]
+        fn msb_pop_from_single_elem() {
+            // --101---
+            let mut bit_string = BitString {
+                buffer: LinearDeque::from([0b101000u8]),
+                offset: Offset::new(3),
+                bit_count: 3,
+            };
+            assert_bitstring!(bit_string, bitstring!("101"));
+
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!("01"));
+            assert_eq!(bit_string.msb().pop(), Some(Zero));
+            assert_bitstring!(bit_string, bitstring!("1"));
+            assert_eq!(bit_string.msb().pop(), Some(One));
+            assert_bitstring!(bit_string, bitstring!(""));
+        }
+
+        #[test]
+        fn msb_pop_empty() {
+            let mut bit_string = BitString::new();
+
+            assert_eq!(bit_string.msb().pop(), None);
+        }
+
+        #[test]
+        fn all_bits() {
+            let mut bit_string = bitstring!("10010011");
+
+            assert_eq!(bit_string.lsb().pop(), Some(One)); // 1001001[1]
+            assert_bitstring!(bit_string, bitstring!("1001001"));
+            assert_eq!(bit_string.msb().pop(), Some(One)); // [1]001001
+            assert_bitstring!(bit_string, bitstring!("001001"));
+            assert_eq!(bit_string.lsb().pop(), Some(One)); // 00100[1]
+            assert_bitstring!(bit_string, bitstring!("00100"));
+            assert_eq!(bit_string.msb().pop(), Some(Zero)); // [0]0100
+            assert_bitstring!(bit_string, bitstring!("0100"));
+            assert_eq!(bit_string.lsb().pop(), Some(Zero)); // 010[0]
+            assert_bitstring!(bit_string, bitstring!("010"));
+            assert_eq!(bit_string.msb().pop(), Some(Zero)); // [0]10
+            assert_bitstring!(bit_string, bitstring!("10"));
+            assert_eq!(bit_string.lsb().pop(), Some(Zero)); // 1[0]
+            assert_bitstring!(bit_string, bitstring!("1"));
+            assert_eq!(bit_string.msb().pop(), Some(One)); // [1]
+            assert_bitstring!(bit_string, bitstring!(""));
+            assert_eq!(bit_string.lsb().pop(), None);
+            assert_eq!(bit_string.msb().pop(), None);
+        }
     }
 
     #[test]

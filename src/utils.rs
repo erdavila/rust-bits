@@ -1,6 +1,8 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
 use std::{cmp, mem};
 
+#[cfg(test)]
+use crate::refrepr::Offset;
 use crate::{BitValue, BitsPrimitive};
 
 // The number of bits required to represent a number of values.
@@ -22,9 +24,40 @@ pub(crate) fn max_value_for_bit_count(bit_count: usize) -> usize {
     bit_count_to_values_count(bit_count) - 1
 }
 
+#[cfg(test)]
 #[inline]
-pub(crate) fn required_elements_for_bit_count<P: BitsPrimitive>(bit_count: usize) -> usize {
-    bit_count / P::BIT_COUNT + if bit_count % P::BIT_COUNT != 0 { 1 } else { 0 }
+pub(crate) fn required_primitive_elements_typed<P: BitsPrimitive>(
+    offset: Offset<P>,
+    bit_count: usize,
+) -> usize {
+    required_primitive_elements_for_type::<P>(offset.value(), bit_count)
+}
+
+#[inline]
+pub(crate) fn required_primitive_elements_for_type<P: BitsPrimitive>(
+    offset: usize,
+    bit_count: usize,
+) -> usize {
+    required_primitive_elements(offset, bit_count, P::BIT_COUNT)
+}
+
+#[inline]
+pub(crate) fn required_primitive_elements(
+    offset: usize,
+    bit_count: usize,
+    element_bit_count: usize,
+) -> usize {
+    if bit_count == 0 {
+        0
+    } else {
+        let end_offset = offset + bit_count;
+        end_offset / element_bit_count
+            + if end_offset % element_bit_count != 0 {
+                1
+            } else {
+                0
+            }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -262,6 +295,7 @@ pub(crate) enum Either<L, R> {
 #[cfg(test)]
 mod tests {
     use crate::utils::BitPattern;
+    use crate::BitsPrimitive;
 
     #[test]
     fn values_count_to_bit_count() {
@@ -282,14 +316,28 @@ mod tests {
     }
 
     #[test]
-    fn required_elements_for_bit_count() {
-        use super::required_elements_for_bit_count;
+    fn required_primitive_elements() {
+        use super::required_primitive_elements;
 
-        assert_eq!(required_elements_for_bit_count::<u8>(7), 1);
-        assert_eq!(required_elements_for_bit_count::<u8>(8), 1);
-        assert_eq!(required_elements_for_bit_count::<u8>(9), 2);
-        assert_eq!(required_elements_for_bit_count::<u8>(16), 2);
-        assert_eq!(required_elements_for_bit_count::<u8>(17), 3);
+        assert_eq!(required_primitive_elements(0, 0, u8::BIT_COUNT), 0);
+        assert_eq!(required_primitive_elements(0, 1, u8::BIT_COUNT), 1);
+        assert_eq!(required_primitive_elements(0, 8, u8::BIT_COUNT), 1);
+        assert_eq!(required_primitive_elements(0, 9, u8::BIT_COUNT), 2);
+        assert_eq!(required_primitive_elements(0, 16, u8::BIT_COUNT), 2);
+        assert_eq!(required_primitive_elements(0, 17, u8::BIT_COUNT), 3);
+
+        assert_eq!(required_primitive_elements(1, 0, u8::BIT_COUNT), 0);
+        assert_eq!(required_primitive_elements(1, 1, u8::BIT_COUNT), 1);
+        assert_eq!(required_primitive_elements(1, 7, u8::BIT_COUNT), 1);
+        assert_eq!(required_primitive_elements(1, 8, u8::BIT_COUNT), 2);
+        assert_eq!(required_primitive_elements(1, 15, u8::BIT_COUNT), 2);
+        assert_eq!(required_primitive_elements(1, 16, u8::BIT_COUNT), 3);
+
+        assert_eq!(required_primitive_elements(7, 0, u8::BIT_COUNT), 0);
+        assert_eq!(required_primitive_elements(7, 1, u8::BIT_COUNT), 1);
+        assert_eq!(required_primitive_elements(7, 2, u8::BIT_COUNT), 2);
+        assert_eq!(required_primitive_elements(7, 9, u8::BIT_COUNT), 2);
+        assert_eq!(required_primitive_elements(7, 10, u8::BIT_COUNT), 3);
     }
 
     #[test]
