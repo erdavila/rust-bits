@@ -24,8 +24,7 @@ fn bit_string_construction() {
             Otherwise, the '0b' is recognized as a binary digits indicator.
      */
     let bit_string = bit_string!(literal_string);
-    let bit_string = bit_string!(literal_string, u8); // ... and other primitive types (?)
-    let bit_string: BitString<u8> = bit_string!(literal_string); // ... and other primitive types
+    let bit_string: BitString = bit_string!(literal_string);
     let _: Result<BitString, _> = str.parse::<BitString>();
 
     let msb: usize;
@@ -51,18 +50,16 @@ fn bit_string_construction() {
     let bits: Vec<BitValue>;
     let _: BitString = bits.iter().collect();
     let _: BitString = bits.into_iter().collect();
-
-    bit_string.to_underlying_type::<u8>(); // ... and other primitive types
 }
 
 fn bit_str_construction() {
-    let n: u8; // ... and other primitive types
-    let bit_str: &BitStr = BitStr::new_ref(&n);
-    let bit_str: &mut BitStr = BitStr::new_mut(&mut n);
+    // Also for mut!
+    let primitive_slice: &[u8];
+    let bit_str: &BitStr = BitStr::new_ref(primitive_slice);
 
     // Also for mut!
-    let primitive_slice: &[u8]; // ... and other primitive types
-    let bit_str: &BitStr = BitStr::new_ref(primitive_slice);
+    let ptr: *const _;
+    let bit_str: &BitStr = unsafe { BitStr::new_ref_unchecked(ptr, bit_count) };
 
     // Also for mut!
     let p: &Primitive<u8>; // ... and other primitive types
