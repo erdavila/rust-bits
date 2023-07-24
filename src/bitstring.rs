@@ -1638,7 +1638,7 @@ mod tests {
 
     #[test]
     fn into_iter() {
-        let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let memory: [u8; 6] = [0xBA, 0xDC, 0xFE, 0x54, 0x76, 0x98]; // In memory: 987654FEDCBA
         let bit_str = BitStr::new_ref(&memory);
         let bit_string = BitString::from(&bit_str[4..44]); // 87654FEDCB
 

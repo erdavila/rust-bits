@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn iter() {
-        let memory: [u16; 2] = [0xDCBA, 0x76FE]; // In memory: 76FEDCBA
+        let memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x76]; // In memory: 76FEDCBA
         let bit_str = BitStr::new_ref(&memory);
 
         let mut iter = bit_str.iter();
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn iter_double_ended() {
-        let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let memory: [u8; 6] = [0xBA, 0xDC, 0xFE, 0x54, 0x76, 0x98]; // In memory: 987654FEDCBA
         let bit_str = BitStr::new_ref(&memory);
 
         let mut iter = bit_str[4..44].iter(); // 87654FEDCB
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn iter_ref() {
-        let memory: [u16; 2] = [0xDCBA, 0x76FE]; // In memory: 76FEDCBA
+        let memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x76]; // In memory: 76FEDCBA
         let bit_str = BitStr::new_ref(&memory);
 
         let mut iter = bit_str.iter_ref();
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn iter_ref_double_ended() {
-        let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let memory: [u8; 6] = [0xBA, 0xDC, 0xFE, 0x54, 0x76, 0x98]; // In memory: 987654FEDCBA
         let bit_str = BitStr::new_ref(&memory);
 
         let mut iter = bit_str[4..44].iter_ref(); // 87654FEDCB
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn iter_mut() {
-        let mut memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let mut memory: [u8; 6] = [0xBA, 0xDC, 0xFE, 0x54, 0x76, 0x98]; // In memory: 987654FEDCBA
         let bit_str = BitStr::new_mut(&mut memory);
 
         let mut iter = bit_str[4..44].iter_mut(); // 87654FEDCB
@@ -719,7 +719,7 @@ mod tests {
         assert!(iter.next_n_back(1).is_none());
         assert_eq!(iter.next_n(0).unwrap(), []);
         assert_eq!(iter.next_n_back(0).unwrap(), []);
-        assert_eq!(memory, [0x23FA, 0x5401, 0x9876]); // In memory: 9876540123FA
+        assert_eq!(memory, [0xFA, 0x23, 0x01, 0x54, 0x76, 0x98]); // In memory: 9876540123FA
     }
 
     #[test]
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn primitives() {
-        let memory: [u16; 2] = [0xDCBA, 0x32FE]; // In memory: 32FEDCBA
+        let memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x32]; // In memory: 32FEDCBA
         let bit_str = &BitStr::new_ref(&memory)[8..28]; // 3[2FEDC]BA
 
         let mut iter = bit_str.iter().primitives::<u8>();
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn subslices() {
-        let memory: [u16; 2] = [0xDCBA, 0x32FE]; // In memory: 32FEDCBA
+        let memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x32]; // In memory: 32FEDCBA
         let bit_str = &BitStr::new_ref(&memory)[8..28]; // 3[2FEDC]BA
 
         let mut iter = bit_str.iter().subslices(8);
@@ -827,7 +827,7 @@ mod tests {
 
     #[test]
     fn reverse() {
-        let memory: [u16; 3] = [0xDCBA, 0x54FE, 0x9876]; // In memory: 987654FEDCBA
+        let memory: [u8; 6] = [0xBA, 0xDC, 0xFE, 0x54, 0x76, 0x98]; // In memory: 987654FEDCBA
         let bit_str = BitStr::new_ref(&memory);
 
         let mut iter = bit_str[4..44].iter().reverse(); // [87654FEDCB]

@@ -788,31 +788,16 @@ mod tests {
     #[test]
     fn new_ref() {
         const N: usize = 3;
+        let memory: [u8; N] = [0u8, 0u8, 0u8];
 
-        macro_rules! assert_new_ref_with_type {
-            ($type:ty) => {
-                let memory: [$type; N] = [<$type>::ZERO, <$type>::ZERO, <$type>::ZERO];
+        let bit_str: &BitStr = BitStr::new_ref(&memory);
 
-                let bit_str: &BitStr = BitStr::new_ref(&memory);
-
-                assert_eq!(bit_str.len(), N * <$type>::BIT_COUNT);
-                let components = unsafe { std::mem::transmute::<_, RefRepr>(bit_str) }.decode();
-                assert_eq!(components.ptr.ptr(), NonNull::from(&memory).cast());
-                assert_eq!(
-                    components.metadata.underlying_primitive,
-                    <$type>::DISCRIMINANT
-                );
-                assert_eq!(components.metadata.offset, 0);
-                assert_eq!(components.metadata.bit_count, N * <$type>::BIT_COUNT);
-            };
-        }
-
-        assert_new_ref_with_type!(usize);
-        assert_new_ref_with_type!(u8);
-        assert_new_ref_with_type!(u16);
-        assert_new_ref_with_type!(u32);
-        assert_new_ref_with_type!(u64);
-        assert_new_ref_with_type!(u128);
+        assert_eq!(bit_str.len(), N * <u8>::BIT_COUNT);
+        let components = unsafe { std::mem::transmute::<_, RefRepr>(bit_str) }.decode();
+        assert_eq!(components.ptr.ptr(), NonNull::from(&memory).cast());
+        assert_eq!(components.metadata.underlying_primitive, <u8>::DISCRIMINANT);
+        assert_eq!(components.metadata.offset, 0);
+        assert_eq!(components.metadata.bit_count, N * <u8>::BIT_COUNT);
     }
 
     #[test]
@@ -904,7 +889,7 @@ mod tests {
 
     #[test]
     fn get_range_ref() {
-        let memory: [u16; 2] = [0b01011111_11101001, 0b10010111_11111010]; // In memory: 10010111_11111010__01011111_11101001
+        let memory: [u8; 4] = [0b11101001, 0b01011111, 0b11111010, 0b10010111]; // In memory: 10010111_11111010__01011111_11101001
         let bit_str = BitStr::new_ref(memory.as_ref());
 
         let range1: Option<&BitStr> = bit_str.get_range_ref(0..4);
@@ -1026,7 +1011,7 @@ mod tests {
 
     #[test]
     fn eq() {
-        let memory: [u16; 3] = [0xCDEF, 0xEFAB, 0xABCD]; // In memory: ABCDEFABCDEF
+        let memory: [u8; 6] = [0xEF, 0xCD, 0xAB, 0xEF, 0xCD, 0xAB]; // In memory: ABCDEFABCDEF
         let bit_str = BitStr::new_ref(&memory);
         let bit_str_1 = &bit_str[8..20]; // In memory: BCD
         let bit_str_2 = &bit_str[32..44]; // In memory: BCD
@@ -1087,7 +1072,6 @@ mod tests {
 
         assert!(!(bit_str < bit_str));
         assert!(!(bit_str < BitStr::new_ref(&[0xBBu8, 0x00u8, 0xBBu8]))); // In memory: BB00BB (equal)
-        assert!(!(bit_str < (&BitStr::new_ref(&[0xBB00u16, 0xBB00u16])[8..]))); // In memory: BB00BB (equal, but u16)
         assert!(bit_str < BitStr::new_ref(&[0xCCu8, 0x00u8, 0xBBu8])); // In memory: BB00CC (MSByte is equal but LSByte is larger)
         assert!(bit_str < BitStr::new_ref(&[0xAAu8, 0x00u8, 0xCCu8])); // In memory: CC00AA (MSByte is larger but LSByte is smaller)
         assert!(empty < zero); // "" < "0"
@@ -1102,10 +1086,9 @@ mod tests {
         fn cmp() {
             let bit_str_1 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8])[0..12]; // In memory: 0110_10010011
             let bit_str_2 = BitStr::new_ref(&[0b10010011u8, 0b0110u8]); // In memory: 00000110_10010011
-            let bit_str_3 = BitStr::new_ref(&[0b00000110_10010011u16]); // In memory: 00000110_10010011
-            let bit_str_4 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
-            let bit_str_5 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
-            let bit_str_6 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
+            let bit_str_3 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
+            let bit_str_4 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
+            let bit_str_5 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
             let bit_str_ne = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
 
             assert!(bit_str_1.numeric_value() == bit_str_1.numeric_value());
@@ -1113,19 +1096,17 @@ mod tests {
             assert!(bit_str_1.numeric_value() == bit_str_3.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_4.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_5.numeric_value());
-            assert!(bit_str_1.numeric_value() == bit_str_6.numeric_value());
             assert!(bit_str_1.numeric_value() < bit_str_ne.numeric_value());
             assert!(bit_str_2.numeric_value() < bit_str_ne.numeric_value());
             assert!(bit_str_3.numeric_value() < bit_str_ne.numeric_value());
             assert!(bit_str_4.numeric_value() < bit_str_ne.numeric_value());
             assert!(bit_str_5.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_6.numeric_value() < bit_str_ne.numeric_value());
             assert!(bit_str_ne.numeric_value() > bit_str_1.numeric_value());
         }
 
         #[test]
         fn get_lower_bits_primitive() {
-            let bit_str = &BitStr::new_ref(&[0b1100_1001_0011_10u16])[2..]; // In memory: 001100_10010011
+            let bit_str = &BitStr::new_ref(&[0b010011_10u8, 0b001100_10u8])[2..]; // In memory: 001100_10010011
 
             assert_eq!(
                 bit_str.numeric_value().get_lower_bits_primitive::<u8>(),

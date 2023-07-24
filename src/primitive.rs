@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn read() {
-        let memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory:: 10FEDCBA
+        let memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x10]; // In memory:: 10FEDCBA
         let p_ref: &Primitive<u8> = new_ref(&memory[0], 12);
 
         let value = p_ref.read();
@@ -203,28 +203,28 @@ mod tests {
 
     #[test]
     fn write() {
-        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory:: 10FEDCBA
+        let mut memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x10]; // In memory:: 10FEDCBA
         let p_ref: &mut Primitive<u8> = new_mut(&mut memory[0], 12);
 
         let previous_value = p_ref.write(0x76);
 
         assert_eq!(previous_value, 0xED);
-        assert_eq!(memory, [0x6CBA, 0x10F7]); // In memory: 10F76CBA
+        assert_eq!(memory, [0xBA, 0x6C, 0xF7, 0x10]); // In memory: 10F76CBA
     }
 
     #[test]
     fn modify() {
-        let mut memory: [u16; 2] = [0xDCBA, 0x10FE]; // In memory:: 10FEDCBA
+        let mut memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x10]; // In memory:: 10FEDCBA
         let p_ref: &mut Primitive<u8> = new_mut(&mut memory[0], 12);
 
         p_ref.modify(Not::not);
 
-        assert_eq!(memory, [0x2CBA, 0x10F1]); // In memory: 10F12CBA
+        assert_eq!(memory, [0xBA, 0x2C, 0xF1, 0x10]); // In memory: 10F12CBA
     }
 
     #[test]
     fn eq() {
-        let memory: [u16; 2] = [0xDCBA, 0xEDCE]; // In memory: EDCEDCBA
+        let memory: [u8; 4] = [0xBA, 0xDC, 0xCE, 0xED]; // In memory: EDCEDCBA
         let p1: &Primitive<u8> = new_ref(&memory[0], 12);
         let p2: &Primitive<u8> = new_ref(&memory[0], 24);
         let p_ne: &Primitive<u8> = new_ref(&memory[0], 0);
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn as_ref() {
-        let memory: [u16; 1] = [0xDCBA];
+        let memory: [u8; 2] = [0xBA, 0xDC];
         let p_ref: &Primitive<u8> = BitStr::new_ref(&memory)[1..15]
             .get_primitive_ref(3)
             .unwrap();
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn as_mut() {
-        let mut memory: [u16; 1] = [0xDCBA];
+        let mut memory: [u8; 2] = [0xBA, 0xDC];
         let p_ref: &mut Primitive<u8> = BitStr::new_mut(&mut memory)[1..15]
             .get_primitive_mut(3)
             .unwrap();
@@ -260,6 +260,6 @@ mod tests {
         for bit in bit_ref.iter_mut() {
             bit.modify(Not::not);
         }
-        assert_eq!(memory, [0xD34A]);
+        assert_eq!(memory, [0x4A, 0xD3]);
     }
 }

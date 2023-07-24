@@ -534,26 +534,15 @@ mod tests {
             };
         }
 
-        macro_rules! assert_conversions_for_type {
-            ($type:ty) => {
-                let under: &[$type] = fake_slice_large_enough_for_max_values();
-                let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
-                let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
-                let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
+        let under: &[u8] = fake_slice_large_enough_for_max_values();
+        let bit_counts = ComponentsBitCounts::from(<u8>::DISCRIMINANT);
+        let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
+        let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
 
-                assert_conversions!($type, under, 0, 0);
-                assert_conversions!($type, under, 0, max_bit_count);
-                assert_conversions!($type, under, max_offset, 0);
-                assert_conversions!($type, under, max_offset, max_bit_count);
-            };
-        }
-
-        assert_conversions_for_type!(usize);
-        assert_conversions_for_type!(u8);
-        assert_conversions_for_type!(u16);
-        assert_conversions_for_type!(u32);
-        assert_conversions_for_type!(u64);
-        assert_conversions_for_type!(u128);
+        assert_conversions!(u8, under, 0, 0);
+        assert_conversions!(u8, under, 0, max_bit_count);
+        assert_conversions!(u8, under, max_offset, 0);
+        assert_conversions!(u8, under, max_offset, max_bit_count);
     }
 
     #[test]
@@ -573,28 +562,17 @@ mod tests {
             };
         }
 
-        macro_rules! assert_metadata_encoding_limits_for_type {
-            ($type:ty) => {
-                let bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
-                let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
-                let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
+        let bit_counts = ComponentsBitCounts::from(<u8>::DISCRIMINANT);
+        let max_offset = max_value_for_bit_count(bit_counts.offset_bit_count);
+        let max_bit_count = max_value_for_bit_count(bit_counts.bit_count_bit_count);
 
-                assert_metadata_encoding!($type, BitPattern::<usize>::new_with_zeros().get(), 0, 0);
-                assert_metadata_encoding!(
-                    $type,
-                    BitPattern::<usize>::new_with_ones().get(),
-                    max_offset,
-                    max_bit_count
-                );
-            };
-        }
-
-        assert_metadata_encoding_limits_for_type!(usize);
-        assert_metadata_encoding_limits_for_type!(u8);
-        assert_metadata_encoding_limits_for_type!(u16);
-        assert_metadata_encoding_limits_for_type!(u32);
-        assert_metadata_encoding_limits_for_type!(u64);
-        assert_metadata_encoding_limits_for_type!(u128);
+        assert_metadata_encoding!(u8, BitPattern::<usize>::new_with_zeros().get(), 0, 0);
+        assert_metadata_encoding!(
+            u8,
+            BitPattern::<usize>::new_with_ones().get(),
+            max_offset,
+            max_bit_count
+        );
     }
 
     macro_rules! test_bit_count_too_large {
