@@ -1,7 +1,7 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
 use std::{cmp, mem};
 
-use crate::refrepr::Offset;
+use crate::ref_encoding::offset::Offset;
 use crate::{BitValue, BitsPrimitive};
 
 // The number of bits required to represent a number of values.
@@ -25,33 +25,13 @@ pub(crate) const fn max_value_for_bit_count(bit_count: usize) -> usize {
 }
 
 #[inline]
-pub(crate) fn required_primitive_elements_typed<P: BitsPrimitive>(
-    offset: Offset<P>,
-    bit_count: usize,
-) -> usize {
-    required_primitive_elements_for_type::<P>(offset.value(), bit_count)
-}
-
-#[inline]
-pub(crate) fn required_primitive_elements_for_type<P: BitsPrimitive>(
-    offset: usize,
-    bit_count: usize,
-) -> usize {
-    required_primitive_elements(offset, bit_count, P::BIT_COUNT)
-}
-
-#[inline]
-pub(crate) fn required_primitive_elements(
-    offset: usize,
-    bit_count: usize,
-    element_bit_count: usize,
-) -> usize {
+pub(crate) fn required_bytes(offset: Offset, bit_count: usize) -> usize {
     if bit_count == 0 {
         0
     } else {
-        let end_offset = offset + bit_count;
-        end_offset / element_bit_count
-            + if end_offset % element_bit_count != 0 {
+        let end_offset = offset.value() + bit_count;
+        end_offset / u8::BIT_COUNT
+            + if end_offset % u8::BIT_COUNT != 0 {
                 1
             } else {
                 0
@@ -184,81 +164,83 @@ impl<P: BitsPrimitive> Debug for CountedBits<P> {
     }
 }
 
-pub(crate) mod primitive_elements_regions {
+pub(crate) mod underlying_bytes_regions {
     use std::ops::Range;
 
+    use crate::ref_encoding::offset::Offset;
+    use crate::BitsPrimitive;
+
     #[derive(PartialEq, Eq, Debug)]
-    pub(crate) struct LsbElement {
-        pub(crate) bit_offset: usize,
+    pub(crate) struct LsbByte {
+        pub(crate) bit_offset: Offset,
         pub(crate) bit_count: usize,
     }
 
     #[derive(PartialEq, Eq, Debug)]
-    pub(crate) struct FullElements {
+    pub(crate) struct FullBytes {
         pub(crate) indexes: Range<usize>,
     }
 
     #[derive(PartialEq, Eq, Debug)]
-    pub(crate) struct MsbElement {
+    pub(crate) struct MsbByte {
         pub(crate) index: usize,
         pub(crate) bit_count: usize,
     }
 
     #[derive(PartialEq, Eq, Debug)]
-    pub(crate) enum PrimitiveElementsRegions {
+    pub(crate) enum UnderlyingBytesRegions {
         Multiple {
-            lsb_element: Option<LsbElement>,
-            full_elements: Option<FullElements>,
-            msb_element: Option<MsbElement>,
+            lsb_byte: Option<LsbByte>,
+            full_bytes: Option<FullBytes>,
+            msb_byte: Option<MsbByte>,
         },
         Single {
-            bit_offset: usize,
+            bit_offset: Offset,
             bit_count: usize,
         },
     }
 
-    impl PrimitiveElementsRegions {
-        pub(crate) fn new(offset: usize, bit_count: usize, element_bit_count: usize) -> Self {
+    impl UnderlyingBytesRegions {
+        pub(crate) fn new(offset: Offset, bit_count: usize) -> Self {
             if bit_count == 0 {
                 Self::Multiple {
-                    lsb_element: None,
-                    full_elements: None,
-                    msb_element: None,
+                    lsb_byte: None,
+                    full_bytes: None,
+                    msb_byte: None,
                 }
             } else {
-                let start_offset = offset;
+                let start_offset = offset.value();
                 let end_offset = start_offset + bit_count;
 
-                if start_offset > 0 && end_offset < element_bit_count {
+                if start_offset > 0 && end_offset < u8::BIT_COUNT {
                     Self::Single {
-                        bit_offset: start_offset,
+                        bit_offset: offset,
                         bit_count,
                     }
                 } else {
-                    let lsb_element = (start_offset > 0).then_some(LsbElement {
-                        bit_offset: start_offset,
-                        bit_count: element_bit_count - start_offset,
+                    let lsb_byte = (start_offset > 0).then_some(LsbByte {
+                        bit_offset: offset,
+                        bit_count: u8::BIT_COUNT - start_offset,
                     });
 
-                    let msb_elem_index = end_offset / element_bit_count;
-                    let msb_elem_bit_count = end_offset % element_bit_count;
-                    let msb_element = (msb_elem_bit_count > 0).then_some(MsbElement {
-                        index: msb_elem_index,
-                        bit_count: msb_elem_bit_count,
+                    let msb_byte_index = end_offset / u8::BIT_COUNT;
+                    let msb_byte_bit_count = end_offset % u8::BIT_COUNT;
+                    let msb_byte = (msb_byte_bit_count > 0).then_some(MsbByte {
+                        index: msb_byte_index,
+                        bit_count: msb_byte_bit_count,
                     });
 
-                    let full_elems_idxs_start = if lsb_element.is_some() { 1 } else { 0 };
-                    let full_elems_idxs_end = msb_elem_index;
-                    let full_elems_idxs_range = full_elems_idxs_start..full_elems_idxs_end;
-                    let full_elements =
-                        (!full_elems_idxs_range.is_empty()).then_some(FullElements {
-                            indexes: full_elems_idxs_range,
-                        });
+                    let full_bytes_idxs_start = if lsb_byte.is_some() { 1 } else { 0 };
+                    let full_bytes_idxs_end = msb_byte_index;
+                    let full_bytes_idxs_range = full_bytes_idxs_start..full_bytes_idxs_end;
+                    let full_bytes = (!full_bytes_idxs_range.is_empty()).then_some(FullBytes {
+                        indexes: full_bytes_idxs_range,
+                    });
 
                     Self::Multiple {
-                        lsb_element,
-                        full_elements,
-                        msb_element,
+                        lsb_byte,
+                        full_bytes,
+                        msb_byte,
                     }
                 }
             }
@@ -307,8 +289,8 @@ pub(crate) enum Either<L, R> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ref_encoding::offset::Offset;
     use crate::utils::BitPattern;
-    use crate::BitsPrimitive;
 
     #[test]
     fn values_count_to_bit_count() {
@@ -329,51 +311,57 @@ mod tests {
     }
 
     #[test]
-    fn required_primitive_elements() {
-        use super::required_primitive_elements;
+    fn required_bytes() {
+        use super::required_bytes;
 
-        assert_eq!(required_primitive_elements(0, 0, u8::BIT_COUNT), 0);
-        assert_eq!(required_primitive_elements(0, 1, u8::BIT_COUNT), 1);
-        assert_eq!(required_primitive_elements(0, 8, u8::BIT_COUNT), 1);
-        assert_eq!(required_primitive_elements(0, 9, u8::BIT_COUNT), 2);
-        assert_eq!(required_primitive_elements(0, 16, u8::BIT_COUNT), 2);
-        assert_eq!(required_primitive_elements(0, 17, u8::BIT_COUNT), 3);
+        macro_rules! assert_required_bytes {
+            ($offset:expr, $bit_count:expr, $expected:expr) => {
+                assert_eq!(required_bytes(Offset::new($offset), $bit_count), $expected);
+            };
+        }
 
-        assert_eq!(required_primitive_elements(1, 0, u8::BIT_COUNT), 0);
-        assert_eq!(required_primitive_elements(1, 1, u8::BIT_COUNT), 1);
-        assert_eq!(required_primitive_elements(1, 7, u8::BIT_COUNT), 1);
-        assert_eq!(required_primitive_elements(1, 8, u8::BIT_COUNT), 2);
-        assert_eq!(required_primitive_elements(1, 15, u8::BIT_COUNT), 2);
-        assert_eq!(required_primitive_elements(1, 16, u8::BIT_COUNT), 3);
+        assert_required_bytes!(0, 0, 0);
+        assert_required_bytes!(0, 1, 1);
+        assert_required_bytes!(0, 8, 1);
+        assert_required_bytes!(0, 9, 2);
+        assert_required_bytes!(0, 16, 2);
+        assert_required_bytes!(0, 17, 3);
 
-        assert_eq!(required_primitive_elements(7, 0, u8::BIT_COUNT), 0);
-        assert_eq!(required_primitive_elements(7, 1, u8::BIT_COUNT), 1);
-        assert_eq!(required_primitive_elements(7, 2, u8::BIT_COUNT), 2);
-        assert_eq!(required_primitive_elements(7, 9, u8::BIT_COUNT), 2);
-        assert_eq!(required_primitive_elements(7, 10, u8::BIT_COUNT), 3);
+        assert_required_bytes!(1, 0, 0);
+        assert_required_bytes!(1, 1, 1);
+        assert_required_bytes!(1, 7, 1);
+        assert_required_bytes!(1, 8, 2);
+        assert_required_bytes!(1, 15, 2);
+        assert_required_bytes!(1, 16, 3);
+
+        assert_required_bytes!(7, 0, 0);
+        assert_required_bytes!(7, 1, 1);
+        assert_required_bytes!(7, 2, 2);
+        assert_required_bytes!(7, 9, 2);
+        assert_required_bytes!(7, 10, 3);
     }
 
     #[test]
-    fn primitive_elements_regions() {
-        use super::primitive_elements_regions::*;
+    fn underlying_bytes_regions() {
+        use super::underlying_bytes_regions::*;
 
         // |--------|--------|--------[]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 0, 0),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: None,
-                msb_element: None,
+            UnderlyingBytesRegions::new(Offset::new(0), 0),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: None,
+                msb_byte: None,
             }
         );
 
         // |--------|--------|---[#####]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 5, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: None,
-                msb_element: Some(MsbElement {
+            UnderlyingBytesRegions::new(Offset::new(0), 5),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: None,
+                msb_byte: Some(MsbByte {
                     index: 0,
                     bit_count: 5
                 }),
@@ -382,21 +370,21 @@ mod tests {
 
         // |--------|--------|[########]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 8, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: Some(FullElements { indexes: 0..1 }),
-                msb_element: None,
+            UnderlyingBytesRegions::new(Offset::new(0), 8),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: Some(FullBytes { indexes: 0..1 }),
+                msb_byte: None,
             }
         );
 
         // |--------|---[#####|########]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 13, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: Some(FullElements { indexes: 0..1 }),
-                msb_element: Some(MsbElement {
+            UnderlyingBytesRegions::new(Offset::new(0), 13),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: Some(FullBytes { indexes: 0..1 }),
+                msb_byte: Some(MsbByte {
                     index: 1,
                     bit_count: 5
                 }),
@@ -405,21 +393,21 @@ mod tests {
 
         // |--------|[########|########]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 16, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: Some(FullElements { indexes: 0..2 }),
-                msb_element: None,
+            UnderlyingBytesRegions::new(Offset::new(0), 16),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: Some(FullBytes { indexes: 0..2 }),
+                msb_byte: None,
             }
         );
 
         // |---[#####|########|########]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 21, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: Some(FullElements { indexes: 0..2 }),
-                msb_element: Some(MsbElement {
+            UnderlyingBytesRegions::new(Offset::new(0), 21),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: Some(FullBytes { indexes: 0..2 }),
+                msb_byte: Some(MsbByte {
                     index: 2,
                     bit_count: 5
                 }),
@@ -428,56 +416,56 @@ mod tests {
 
         // |[########|########|########]|
         assert_eq!(
-            PrimitiveElementsRegions::new(0, 24, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: Some(FullElements { indexes: 0..3 }),
-                msb_element: None,
+            UnderlyingBytesRegions::new(Offset::new(0), 24),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: Some(FullBytes { indexes: 0..3 }),
+                msb_byte: None,
             }
         );
 
         // |--------|--------|-----[]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 0, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: None,
-                full_elements: None,
-                msb_element: None,
+            UnderlyingBytesRegions::new(Offset::new(3), 0,),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: None,
+                full_bytes: None,
+                msb_byte: None,
             }
         );
 
         // |--------|--------|---[##]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 2, 8),
-            PrimitiveElementsRegions::Single {
-                bit_offset: 3,
+            UnderlyingBytesRegions::new(Offset::new(3), 2,),
+            UnderlyingBytesRegions::Single {
+                bit_offset: Offset::new(3),
                 bit_count: 2
             }
         );
 
         // |--------|--------|[#####]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 5, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: Some(LsbElement {
-                    bit_offset: 3,
+            UnderlyingBytesRegions::new(Offset::new(3), 5,),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: Some(LsbByte {
+                    bit_offset: Offset::new(3),
                     bit_count: 5
                 }),
-                full_elements: None,
-                msb_element: None,
+                full_bytes: None,
+                msb_byte: None,
             }
         );
 
         // |--------|---[#####|#####]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 10, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: Some(LsbElement {
-                    bit_offset: 3,
+            UnderlyingBytesRegions::new(Offset::new(3), 10),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: Some(LsbByte {
+                    bit_offset: Offset::new(3),
                     bit_count: 5
                 }),
-                full_elements: None,
-                msb_element: Some(MsbElement {
+                full_bytes: None,
+                msb_byte: Some(MsbByte {
                     index: 1,
                     bit_count: 5
                 }),
@@ -486,27 +474,27 @@ mod tests {
 
         // |--------|[########|#####]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 13, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: Some(LsbElement {
-                    bit_offset: 3,
+            UnderlyingBytesRegions::new(Offset::new(3), 13),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: Some(LsbByte {
+                    bit_offset: Offset::new(3),
                     bit_count: 5
                 }),
-                full_elements: Some(FullElements { indexes: 1..2 }),
-                msb_element: None,
+                full_bytes: Some(FullBytes { indexes: 1..2 }),
+                msb_byte: None,
             }
         );
 
         // |---[#####|########|#####]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 18, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: Some(LsbElement {
-                    bit_offset: 3,
+            UnderlyingBytesRegions::new(Offset::new(3), 18),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: Some(LsbByte {
+                    bit_offset: Offset::new(3),
                     bit_count: 5
                 }),
-                full_elements: Some(FullElements { indexes: 1..2 }),
-                msb_element: Some(MsbElement {
+                full_bytes: Some(FullBytes { indexes: 1..2 }),
+                msb_byte: Some(MsbByte {
                     index: 2,
                     bit_count: 5
                 }),
@@ -515,14 +503,14 @@ mod tests {
 
         // |[########|########|#####]---|
         assert_eq!(
-            PrimitiveElementsRegions::new(3, 21, 8),
-            PrimitiveElementsRegions::Multiple {
-                lsb_element: Some(LsbElement {
-                    bit_offset: 3,
+            UnderlyingBytesRegions::new(Offset::new(3), 21),
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte: Some(LsbByte {
+                    bit_offset: Offset::new(3),
                     bit_count: 5
                 }),
-                full_elements: Some(FullElements { indexes: 1..3 }),
-                msb_element: None,
+                full_bytes: Some(FullBytes { indexes: 1..3 }),
+                msb_byte: None,
             }
         );
     }

@@ -190,6 +190,7 @@ mod offset {
             }
         }
 
+        #[cfg(test)]
         #[inline]
         pub(crate) fn value(&self) -> usize {
             self.value

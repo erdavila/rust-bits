@@ -7,8 +7,9 @@ use std::ops::{
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
+use crate::utils::underlying_bytes_regions::UnderlyingBytesRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
@@ -247,7 +248,7 @@ impl BitStr {
         macro_rules! read_and_test {
             ($index:expr, $offset:expr, $bit_count:expr) => {{
                 let byte = unsafe { components.bit_ptr.byte_ptr().add($index).read() };
-                let mut bits = byte >> $offset;
+                let mut bits = byte >> $offset.value();
                 if $bit_count != u8::BIT_COUNT {
                     bits &= BitPattern::<u8>::new_with_zeros()
                         .and_ones($bit_count)
@@ -259,33 +260,30 @@ impl BitStr {
             }};
         }
 
-        let regions = PrimitiveElementsRegions::new(
-            components.bit_ptr.offset().value(),
-            components.bit_count,
-            u8::BIT_COUNT,
-        );
+        let regions =
+            UnderlyingBytesRegions::new(components.bit_ptr.offset(), components.bit_count);
 
         match regions {
-            PrimitiveElementsRegions::Multiple {
-                lsb_element,
-                full_elements,
-                msb_element,
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte,
+                full_bytes,
+                msb_byte,
             } => {
-                if let Some(lsb) = lsb_element {
+                if let Some(lsb) = lsb_byte {
                     read_and_test!(0, lsb.bit_offset, lsb.bit_count);
                 }
 
-                if let Some(full) = full_elements {
+                if let Some(full) = full_bytes {
                     for index in full.indexes {
-                        read_and_test!(index, 0, u8::BIT_COUNT);
+                        read_and_test!(index, Offset::new(0), u8::BIT_COUNT);
                     }
                 }
 
-                if let Some(msb) = msb_element {
-                    read_and_test!(msb.index, 0, msb.bit_count);
+                if let Some(msb) = msb_byte {
+                    read_and_test!(msb.index, Offset::new(0), msb.bit_count);
                 }
             }
-            PrimitiveElementsRegions::Single {
+            UnderlyingBytesRegions::Single {
                 bit_offset,
                 bit_count,
             } => read_and_test!(0, bit_offset, bit_count),

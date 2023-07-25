@@ -15,10 +15,8 @@ use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::pointer::Pointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
-use crate::utils::{
-    required_primitive_elements_for_type, required_primitive_elements_typed, CountedBits,
-};
+use crate::utils::underlying_bytes_regions::UnderlyingBytesRegions;
+use crate::utils::{required_bytes, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone)]
@@ -71,8 +69,8 @@ impl BitString {
     }
 
     #[inline]
-    fn primitive_elements_regions(&self) -> PrimitiveElementsRegions {
-        PrimitiveElementsRegions::new(self.offset.value(), self.bit_count, u8::BIT_COUNT)
+    fn underlying_bytes_regions(&self) -> UnderlyingBytesRegions {
+        UnderlyingBytesRegions::new(self.offset, self.bit_count)
     }
 
     #[inline]
@@ -134,7 +132,7 @@ impl<S: BitSource> From<S> for BitString {
     #[inline]
     fn from(source: S) -> Self {
         let bit_count = source.bit_count();
-        let buffer_elems = required_primitive_elements_for_type::<u8>(0, bit_count);
+        let buffer_elems = required_bytes(Offset::new(0), bit_count);
 
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, 0u8);
@@ -490,13 +488,13 @@ impl<'a> BitStringLsbEnd<'a> {
             let value = f(bit_ptr, bit_count);
 
             let mut bits_to_discard = bit_count;
-            match self.0.primitive_elements_regions() {
-                PrimitiveElementsRegions::Multiple {
-                    lsb_element,
-                    full_elements,
-                    msb_element,
+            match self.0.underlying_bytes_regions() {
+                UnderlyingBytesRegions::Multiple {
+                    lsb_byte,
+                    full_bytes,
+                    msb_byte,
                 } => 'elem_discard: {
-                    if let Some(lsb) = lsb_element {
+                    if let Some(lsb) = lsb_byte {
                         if lsb.bit_count <= bits_to_discard {
                             self.0.buffer.pop_front();
                             bits_to_discard -= lsb.bit_count;
@@ -505,7 +503,7 @@ impl<'a> BitStringLsbEnd<'a> {
                         }
                     }
 
-                    if let Some(full) = full_elements {
+                    if let Some(full) = full_bytes {
                         for _ in full.indexes {
                             if u8::BIT_COUNT <= bits_to_discard {
                                 self.0.buffer.pop_front();
@@ -516,7 +514,7 @@ impl<'a> BitStringLsbEnd<'a> {
                         }
                     }
 
-                    if let Some(msb) = msb_element {
+                    if let Some(msb) = msb_byte {
                         if msb.bit_count == bits_to_discard {
                             self.0.buffer.pop_front();
                         } else {
@@ -524,7 +522,7 @@ impl<'a> BitStringLsbEnd<'a> {
                         }
                     }
                 }
-                PrimitiveElementsRegions::Single {
+                UnderlyingBytesRegions::Single {
                     bit_offset: _,
                     bit_count,
                 } => {
@@ -548,8 +546,7 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
 
         let mut updated_offset = self.0.offset.value();
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
-            let additional_elems =
-                required_primitive_elements_for_type::<u8>(0, additional_elems_bit_count);
+            let additional_elems = required_bytes(Offset::new(0), additional_elems_bit_count);
             self.0
                 .buffer
                 .resize_at_front(self.0.buffer.len() + additional_elems, 0u8);
@@ -598,13 +595,13 @@ impl<'a> BitStringMsbEnd<'a> {
             let value = f(bit_ptr, bit_count);
 
             let mut bits_to_discard = bit_count;
-            match self.0.primitive_elements_regions() {
-                PrimitiveElementsRegions::Multiple {
-                    lsb_element,
-                    full_elements,
-                    msb_element,
+            match self.0.underlying_bytes_regions() {
+                UnderlyingBytesRegions::Multiple {
+                    lsb_byte,
+                    full_bytes,
+                    msb_byte,
                 } => 'elem_discard: {
-                    if let Some(msb) = msb_element {
+                    if let Some(msb) = msb_byte {
                         if msb.bit_count <= bits_to_discard {
                             self.0.buffer.pop_back();
                             bits_to_discard -= msb.bit_count;
@@ -613,7 +610,7 @@ impl<'a> BitStringMsbEnd<'a> {
                         }
                     }
 
-                    if let Some(full) = full_elements {
+                    if let Some(full) = full_bytes {
                         for _ in full.indexes {
                             if u8::BIT_COUNT <= bits_to_discard {
                                 self.0.buffer.pop_back();
@@ -624,7 +621,7 @@ impl<'a> BitStringMsbEnd<'a> {
                         }
                     }
 
-                    if let Some(lsb) = lsb_element {
+                    if let Some(lsb) = lsb_byte {
                         if lsb.bit_count == bits_to_discard {
                             self.0.buffer.pop_back();
                         } else {
@@ -632,7 +629,7 @@ impl<'a> BitStringMsbEnd<'a> {
                         }
                     }
                 }
-                PrimitiveElementsRegions::Single {
+                UnderlyingBytesRegions::Single {
                     bit_offset: _,
                     bit_count,
                 } => {
@@ -654,8 +651,7 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
         let space = self.0.buffer.len() * u8::BIT_COUNT - self.0.offset.value() - self.0.len();
 
         if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
-            let additional_elems =
-                required_primitive_elements_for_type::<u8>(0, additional_elems_bit_count);
+            let additional_elems = required_bytes(Offset::new(0), additional_elems_bit_count);
             self.0
                 .buffer
                 .resize_at_back(self.0.buffer.len() + additional_elems, 0u8);
@@ -710,7 +706,7 @@ fn get_primitive_from_bit_str<P: BitsPrimitive>(bit_ptr: BitPointer, _bit_count:
 fn get_bit_string_from_bit_str(bit_ptr: BitPointer, bit_count: usize) -> BitString {
     let mut buffer = LinearDeque::new();
     let offset = Offset::new(0);
-    let elems_count = required_primitive_elements_typed(offset.into(), bit_count);
+    let elems_count = required_bytes(offset, bit_count);
     buffer.resize(elems_count, 0u8);
 
     let src = bit_ptr;
@@ -769,7 +765,7 @@ impl IntoIter {
 
     #[inline]
     fn get_slice(params: IntoIterNextItemParams) -> BitString {
-        let buffer_elems = required_primitive_elements_for_type::<u8>(0, params.bit_count);
+        let buffer_elems = required_bytes(Offset::new(0), params.bit_count);
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, 0u8);
 
@@ -857,10 +853,7 @@ mod tests {
             let bit_string = &$value;
             assert_eq!(
                 bit_string.buffer.len(),
-                $crate::utils::required_primitive_elements_typed(
-                    bit_string.offset.into(),
-                    bit_string.bit_count
-                )
+                $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count)
             );
             assert_eq!(*bit_string, $expected);
         }};

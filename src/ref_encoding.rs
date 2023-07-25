@@ -230,18 +230,14 @@ mod tests {
     use crate::ref_encoding::bit_pointer::BitPointer;
     use crate::ref_encoding::offset::Offset;
     use crate::ref_encoding::{EncodedMetadata, RefComponents};
-    use crate::utils::{required_primitive_elements, BitPattern};
-    use crate::BitsPrimitive;
+    use crate::utils::{required_bytes, BitPattern};
 
     use super::byte_pointer::BytePointer;
 
     // Warning: the returned slice must not be dereferenced because it does not really reference a large region of memory!
     fn fake_slice_large_enough_for_max_values<'a>() -> &'a [u8] {
-        let len = required_primitive_elements(
-            EncodedMetadata::MAX_OFFSET,
-            EncodedMetadata::MAX_BIT_COUNT,
-            u8::BIT_COUNT,
-        );
+        let offset = Offset::new(EncodedMetadata::MAX_OFFSET);
+        let len = required_bytes(offset, EncodedMetadata::MAX_BIT_COUNT);
         unsafe { slice::from_raw_parts(&0u8, len) }
     }
 
