@@ -1,13 +1,13 @@
-use std::cmp;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::slice;
 
 use crate::copy_bits::copy_bits_ptr;
+use crate::copy_bits::copy_bits_to_primitives;
+use crate::copy_bits::copy_primitives_to_bits;
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
 use crate::refrepr::BitPointer as LegacyBitPointer;
-use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
-use crate::utils::{BitPattern, CountedBits};
 use crate::{BitStr, BitsPrimitive};
 
 #[repr(C)]
@@ -85,105 +85,14 @@ impl<P: BitsPrimitive> PrimitiveAccessor<P> {
 
     #[inline]
     pub(crate) fn get_lower_bits(&self, count: usize) -> P {
-        let mut bits = CountedBits::new();
-
-        match self.regions() {
-            PrimitiveElementsRegions::Multiple {
-                lsb_element,
-                full_elements,
-                msb_element,
-            } => 'read_and_push: {
-                macro_rules! read_and_push {
-                    ($index:expr, $offset:expr, $bit_count:expr) => {{
-                        let bit_count = cmp::min($bit_count, count - bits.count);
-                        let mut byte = unsafe { self.bit_ptr.byte_ptr().add($index).read() };
-                        byte >>= $offset;
-                        if bit_count != u8::BIT_COUNT {
-                            byte &= BitPattern::<u8>::new_with_zeros().and_ones(bit_count).get();
-                        }
-                        bits.push_msb(CountedBits::with_count(P::from_u8(byte), bit_count));
-                        if bits.count == count {
-                            break 'read_and_push;
-                        }
-                    }};
-                }
-
-                if let Some(lsb) = lsb_element {
-                    read_and_push!(0, lsb.bit_offset, lsb.bit_count);
-                }
-
-                if let Some(full) = full_elements {
-                    for index in full.indexes {
-                        read_and_push!(index, 0, u8::BIT_COUNT);
-                    }
-                }
-
-                if let Some(msb) = msb_element {
-                    read_and_push!(msb.index, 0, msb.bit_count);
-                }
-            }
-            PrimitiveElementsRegions::Single {
-                bit_offset: _,
-                bit_count: _,
-            } => unreachable!(),
-        }
-
-        bits.bits
+        let mut primitive = P::ZERO;
+        unsafe { copy_bits_to_primitives(self.bit_ptr, slice::from_mut(&mut primitive), count) };
+        primitive
     }
 
     #[inline]
     fn set(&mut self, value: P) {
-        let mut bits = CountedBits::from(value);
-
-        match self.regions() {
-            PrimitiveElementsRegions::Multiple {
-                lsb_element,
-                full_elements,
-                msb_element,
-            } => {
-                let mut pop_and_write = |index, bit_count, offset| {
-                    let byte = bits.pop_lsb(bit_count).bits.to_u8() << offset;
-
-                    unsafe {
-                        let mut ptr = self.bit_ptr.byte_ptr().add(index);
-                        let byte_ref = ptr.as_mut();
-                        if bit_count == u8::BIT_COUNT {
-                            *byte_ref = byte;
-                        } else {
-                            *byte_ref &= BitPattern::<u8>::new_with_ones()
-                                .and_zeros(bit_count)
-                                .and_ones(offset)
-                                .get();
-                            *byte_ref |= byte;
-                        }
-                    }
-                };
-
-                if let Some(lsb) = lsb_element {
-                    pop_and_write(0, lsb.bit_count, lsb.bit_offset);
-                }
-
-                if let Some(full) = full_elements {
-                    for index in full.indexes {
-                        pop_and_write(index, u8::BIT_COUNT, 0);
-                    }
-                }
-
-                if let Some(msb) = msb_element {
-                    pop_and_write(msb.index, msb.bit_count, 0);
-                }
-            }
-            PrimitiveElementsRegions::Single {
-                bit_offset: _,
-                bit_count: _,
-            } => unreachable!(),
-        }
-
-        debug_assert_eq!(bits.count, 0);
-    }
-
-    fn regions(&self) -> PrimitiveElementsRegions {
-        PrimitiveElementsRegions::new(self.bit_ptr.offset().value(), P::BIT_COUNT, u8::BIT_COUNT)
+        unsafe { copy_primitives_to_bits(slice::from_ref(&value), self.bit_ptr, P::BIT_COUNT) };
     }
 }
 

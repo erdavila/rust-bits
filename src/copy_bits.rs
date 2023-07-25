@@ -1,11 +1,30 @@
 use std::cmp;
 
-#[cfg(test)]
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::pointer::Pointer;
 use crate::refrepr::BitPointer as LegacyBitPointer;
 use crate::utils::{BitPattern, CountedBits};
 use crate::BitsPrimitive;
+
+pub(crate) unsafe fn copy_bits_to_primitives<P: BitsPrimitive>(
+    bit_ptr: BitPointer,
+    primitives: &mut [P],
+    bit_count: usize,
+) {
+    let src = Source::bits(bit_ptr, bit_count);
+    let dst = Destination::primitives(Pointer::from(primitives));
+    copy_bits_loop(src, dst);
+}
+
+pub(crate) unsafe fn copy_primitives_to_bits<P: BitsPrimitive>(
+    primitives: &[P],
+    bit_ptr: BitPointer,
+    bit_count: usize,
+) {
+    let src = Source::primitives_partial(Pointer::from(primitives), bit_count);
+    let dst = Destination::bits(bit_ptr);
+    copy_bits_loop(src, dst);
+}
 
 #[inline]
 fn copy_bits_loop<S: BitsPrimitive, D: BitsPrimitive>(src: Source<S>, mut dst: Destination<D>) {
@@ -22,7 +41,6 @@ struct Source<P: BitsPrimitive> {
     bit_count: usize,
     buffer: CountedBits<P>,
 }
-#[cfg(test)]
 impl Source<u8> {
     #[inline]
     unsafe fn bits(bit_ptr: BitPointer, bit_count: usize) -> Self {
@@ -34,8 +52,8 @@ impl Source<u8> {
         }
     }
 }
-#[cfg(test)]
 impl<P: BitsPrimitive> Source<P> {
+    #[cfg(test)]
     #[inline]
     unsafe fn primitives(ptr: Pointer<P>, count: usize) -> Self {
         Self::primitives_partial(ptr, count * P::BIT_COUNT)
@@ -83,7 +101,6 @@ struct Destination<P: BitsPrimitive> {
     buffer: CountedBits<P>,
 }
 impl Destination<u8> {
-    #[cfg(test)]
     #[inline]
     unsafe fn bits(bit_ptr: BitPointer) -> Self {
         Destination {
@@ -94,7 +111,6 @@ impl Destination<u8> {
     }
 }
 impl<P: BitsPrimitive> Destination<P> {
-    #[cfg(test)]
     #[inline]
     unsafe fn primitives(ptr: Pointer<P>) -> Self {
         Destination {
