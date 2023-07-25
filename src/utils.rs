@@ -14,12 +14,12 @@ pub(crate) fn values_count_to_bit_count(values_count: usize) -> usize {
 
 // The number of values that can be represented with a number of bits.
 #[inline]
-pub(crate) fn bit_count_to_values_count(bit_count: usize) -> usize {
+pub(crate) const fn bit_count_to_values_count(bit_count: usize) -> usize {
     1 << bit_count
 }
 
 #[inline]
-pub(crate) fn max_value_for_bit_count(bit_count: usize) -> usize {
+pub(crate) const fn max_value_for_bit_count(bit_count: usize) -> usize {
     bit_count_to_values_count(bit_count) - 1
 }
 
