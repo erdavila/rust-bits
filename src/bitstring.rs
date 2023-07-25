@@ -16,7 +16,7 @@ use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{
     required_primitive_elements_for_type, required_primitive_elements_typed, CountedBits,
 };
-use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
+use crate::{BitSource, BitStr, BitValue, BitsPrimitive, LegacyBitAccessor, PrimitiveAccessor};
 
 #[derive(Clone)]
 pub struct BitString {
@@ -685,7 +685,7 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
 
 #[inline]
 fn get_bit_value_from_bit_str(bit_ptr: BitPointer<u8>, _bit_count: usize) -> BitValue {
-    let accessor = BitAccessor::new(bit_ptr);
+    let accessor = LegacyBitAccessor::new(bit_ptr);
     accessor.get()
 }
 
@@ -748,7 +748,7 @@ impl IntoIter {
 
     #[inline]
     fn get_bit_value(params: IntoIterNextItemParams) -> BitValue {
-        let accessor = BitAccessor::new(params.bit_ptr);
+        let accessor = LegacyBitAccessor::new(params.bit_ptr);
         accessor.get()
     }
 

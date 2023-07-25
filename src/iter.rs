@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use crate::refrepr::{
     BitPointer, RefRepr, TypedRefComponents, UntypedPointer, UntypedRefComponents,
 };
-use crate::{Bit, BitAccessor, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
+use crate::{Bit, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector, LegacyBitAccessor};
 use crate::{BitStr, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 pub trait BitIterator<'a>:
@@ -298,7 +298,7 @@ fn select_bit_value(args: SelectOutputArgs) -> BitValue {
             #[inline]
             fn select<U: crate::BitsPrimitive>(self) -> Self::Output {
                 let bit_ptr = BitPointer::new_normalized(self.ptr.as_typed::<U>(), self.offset);
-                let accessor = BitAccessor::new(bit_ptr);
+                let accessor = LegacyBitAccessor::new(bit_ptr);
                 accessor.get()
             }
         }

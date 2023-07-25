@@ -114,11 +114,6 @@ mod typed_pointer {
         pub(crate) fn as_ptr(self) -> *const P {
             self.0.as_ptr()
         }
-
-        #[inline]
-        pub(crate) unsafe fn as_mut(&mut self) -> &mut P {
-            self.0.as_mut()
-        }
     }
 
     impl<P: BitsPrimitive> From<UntypedPointer> for TypedPointer<P> {

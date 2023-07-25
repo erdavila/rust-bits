@@ -2,10 +2,10 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 use crate::bitvalue::BitValue;
-use crate::refrepr::{
-    BitPointer, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents,
-    UntypedRefComponents,
-};
+use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::byte_pointer::BytePointer;
+use crate::ref_encoding::{RefComponents, RefRepr};
+use crate::refrepr::{BitPointer as LegacyBitPointer, TypedPointer};
 use crate::{BitStr, BitsPrimitive};
 
 /// Representation of a reference to a single bit in a [underlying memory].
@@ -32,17 +32,7 @@ impl Bit {
     /// Gets the value of the referenced bit.
     #[inline]
     pub fn read(&self) -> BitValue {
-        struct Selector;
-        impl RefComponentsSelector for Selector {
-            type Output = BitValue;
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let accessor = BitAccessor::new(components.bit_ptr);
-                accessor.get()
-            }
-        }
-
-        self.components().select(Selector)
+        self.accessor().get()
     }
 
     /// Sets the value of the referenced bit.
@@ -50,21 +40,10 @@ impl Bit {
     /// It returns the previous value.
     #[inline]
     pub fn write(&mut self, value: BitValue) -> BitValue {
-        struct Selector {
-            value: BitValue,
-        }
-        impl RefComponentsSelector for Selector {
-            type Output = BitValue;
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor = BitAccessor::new(components.bit_ptr);
-                let previous_value = accessor.get();
-                accessor.set(self.value);
-                previous_value
-            }
-        }
-
-        self.components().select(Selector { value })
+        let mut accessor = self.accessor();
+        let previous_value = accessor.get();
+        accessor.set(value);
+        previous_value
     }
 
     /// Allows retrieving and setting the bit value in a single operation.
@@ -76,28 +55,23 @@ impl Bit {
     /// TODO
     #[inline]
     pub fn modify<F: FnOnce(BitValue) -> BitValue>(&mut self, f: F) {
-        struct Selector<F: FnOnce(BitValue) -> BitValue> {
-            f: F,
-        }
-        impl<F: FnOnce(BitValue) -> BitValue> RefComponentsSelector for Selector<F> {
-            type Output = ();
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor = BitAccessor::new(components.bit_ptr);
-                let previous_value = accessor.get();
-                let new_value = (self.f)(previous_value);
-                accessor.set(new_value);
-            }
-        }
-
-        self.components().select(Selector { f });
+        let mut accessor = self.accessor();
+        let previous_value = accessor.get();
+        let new_value = f(previous_value);
+        accessor.set(new_value);
     }
 
     #[inline]
-    fn components(&self) -> UntypedRefComponents {
+    fn accessor(&self) -> BitAccessor {
+        let components = self.ref_components();
+        BitAccessor::new(components.bit_ptr)
+    }
+
+    #[inline]
+    fn ref_components(&self) -> RefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
-        debug_assert_eq!(components.metadata.bit_count, 1);
+        debug_assert_eq!(components.bit_count, 1);
         components
     }
 
@@ -112,23 +86,23 @@ impl Bit {
     }
 }
 
-pub(crate) struct BitAccessor<P: BitsPrimitive> {
-    ptr: TypedPointer<P>,
-    mask: P,
+pub(crate) struct BitAccessor {
+    ptr: BytePointer,
+    mask: u8,
 }
 
-impl<P: BitsPrimitive> BitAccessor<P> {
+impl BitAccessor {
     #[inline]
-    pub(crate) fn new(bit_ptr: BitPointer<P>) -> Self {
+    pub(crate) fn new(bit_ptr: BitPointer) -> Self {
         BitAccessor {
-            ptr: bit_ptr.elem_ptr(),
-            mask: P::ONE << bit_ptr.offset().value(),
+            ptr: bit_ptr.byte_ptr(),
+            mask: 1 << bit_ptr.offset().value(),
         }
     }
 
     #[inline]
     pub(crate) fn get(&self) -> BitValue {
-        BitValue::from((unsafe { self.ptr.read() } & self.mask) != P::ZERO)
+        BitValue::from((unsafe { self.ptr.read() } & self.mask) != 0)
     }
 
     #[inline]
@@ -139,6 +113,26 @@ impl<P: BitsPrimitive> BitAccessor<P> {
             BitValue::Zero => *mut_ref &= !self.mask,
             BitValue::One => *mut_ref |= self.mask,
         }
+    }
+}
+
+pub(crate) struct LegacyBitAccessor<P: BitsPrimitive> {
+    ptr: TypedPointer<P>,
+    mask: P,
+}
+
+impl<P: BitsPrimitive> LegacyBitAccessor<P> {
+    #[inline]
+    pub(crate) fn new(bit_ptr: LegacyBitPointer<P>) -> Self {
+        LegacyBitAccessor {
+            ptr: bit_ptr.elem_ptr(),
+            mask: P::ONE << bit_ptr.offset().value(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get(&self) -> BitValue {
+        BitValue::from((unsafe { self.ptr.read() } & self.mask) != P::ZERO)
     }
 }
 
@@ -211,22 +205,23 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::ops::Not;
 
-    use crate::refrepr::{BitPointer, RefRepr, TypedRefComponents};
+    use crate::ref_encoding::bit_pointer::BitPointer;
+    use crate::ref_encoding::{RefComponents, RefRepr};
     use crate::BitValue::{One, Zero};
-    use crate::{Bit, BitStr, BitsPrimitive};
+    use crate::{Bit, BitStr};
 
-    fn new_ref<U: BitsPrimitive>(under: &U, bit_index: usize) -> &Bit {
+    fn new_ref(under: &u8, bit_index: usize) -> &Bit {
         let repr = repr(under, bit_index);
         unsafe { std::mem::transmute(repr) }
     }
 
-    fn new_mut<U: BitsPrimitive>(under: &U, bit_index: usize) -> &mut Bit {
+    fn new_mut(under: &u8, bit_index: usize) -> &mut Bit {
         let repr = repr(under, bit_index);
         unsafe { std::mem::transmute(repr) }
     }
 
-    fn repr<U: BitsPrimitive>(under: &U, bit_index: usize) -> RefRepr {
-        let components = TypedRefComponents {
+    fn repr(under: &u8, bit_index: usize) -> RefRepr {
+        let components = RefComponents {
             bit_ptr: BitPointer::new_normalized(under.into(), bit_index),
             bit_count: 1,
         };

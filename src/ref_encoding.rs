@@ -1,23 +1,19 @@
 #[cfg(test)]
-use crate::utils::{max_value_for_bit_count, CountedBits};
-#[cfg(test)]
+use crate::utils::max_value_for_bit_count;
+use crate::utils::CountedBits;
 use crate::BitsPrimitive;
 
-#[cfg(test)]
 use self::bit_pointer::BitPointer;
-#[cfg(test)]
 use self::byte_pointer::BytePointer;
-#[cfg(test)]
 use self::offset::Offset;
 
-#[cfg(test)]
 #[repr(C)]
-struct RefRepr {
+pub(crate) struct RefRepr {
     ptr: BytePointer,
     metadata: EncodedMetadata,
 }
-#[cfg(test)]
 impl RefRepr {
+    #[cfg(test)]
     #[inline]
     fn encode(components: RefComponents) -> Self {
         let metadata = Metadata {
@@ -32,7 +28,7 @@ impl RefRepr {
     }
 
     #[inline]
-    fn decode(&self) -> RefComponents {
+    pub(crate) fn decode(&self) -> RefComponents {
         let metadata = self.metadata.decode();
         RefComponents {
             bit_ptr: BitPointer::new(self.ptr, metadata.offset),
@@ -41,13 +37,12 @@ impl RefRepr {
     }
 }
 
-#[cfg(test)]
 struct Metadata {
     offset: Offset,
     bit_count: usize,
 }
-#[cfg(test)]
 impl Metadata {
+    #[cfg(test)]
     #[inline]
     fn encode(self) -> EncodedMetadata {
         let max_bit_count = EncodedMetadata::MAX_BIT_COUNT;
@@ -65,15 +60,15 @@ impl Metadata {
     }
 }
 
-#[cfg(test)]
 #[repr(transparent)]
 struct EncodedMetadata(usize);
-#[cfg(test)]
 impl EncodedMetadata {
     const OFFSET_BIT_COUNT: usize = 3;
     const BIT_COUNT_BIT_COUNT: usize = usize::BIT_COUNT - Self::OFFSET_BIT_COUNT;
 
+    #[cfg(test)]
     const MAX_OFFSET: usize = max_value_for_bit_count(Self::OFFSET_BIT_COUNT);
+    #[cfg(test)]
     const MAX_BIT_COUNT: usize = max_value_for_bit_count(Self::BIT_COUNT_BIT_COUNT);
 
     #[inline]
@@ -89,22 +84,23 @@ impl EncodedMetadata {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct RefComponents {
-    bit_ptr: BitPointer,
-    bit_count: usize,
+pub(crate) struct RefComponents {
+    pub(crate) bit_ptr: BitPointer,
+    pub(crate) bit_count: usize,
 }
 #[cfg(test)]
 impl RefComponents {
     #[inline]
-    fn encode(self) -> RefRepr {
+    pub(crate) fn encode(self) -> RefRepr {
         RefRepr::encode(self)
     }
 }
 
-#[cfg(test)]
-mod bit_pointer {
+pub(crate) mod bit_pointer {
+    #[cfg(test)]
+    use crate::BitsPrimitive;
+
     use super::byte_pointer::BytePointer;
     use super::offset::Offset;
 
@@ -115,6 +111,15 @@ mod bit_pointer {
         #[inline]
         pub(crate) fn new(byte_ptr: BytePointer, offset: Offset) -> Self {
             BitPointer(byte_ptr, offset)
+        }
+
+        #[cfg(test)]
+        #[inline]
+        pub(crate) fn new_normalized(byte_ptr: BytePointer, offset: usize) -> Self {
+            let index = offset / u8::BIT_COUNT;
+            let byte_ptr = unsafe { byte_ptr.add(index) };
+            let offset = Offset::new(offset);
+            Self::new(byte_ptr, offset)
         }
 
         #[inline]
@@ -129,11 +134,30 @@ mod bit_pointer {
     }
 }
 
-mod byte_pointer {
+pub(crate) mod byte_pointer {
     use std::ptr::NonNull;
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub(crate) struct BytePointer(NonNull<u8>);
+
+    impl BytePointer {
+        #[inline]
+        pub(crate) unsafe fn read(self) -> u8 {
+            self.0.as_ptr().read()
+        }
+
+        #[cfg(test)]
+        #[inline]
+        pub(crate) unsafe fn add(&self, count: usize) -> Self {
+            let ptr = NonNull::new_unchecked(self.0.as_ptr().add(count));
+            BytePointer(ptr)
+        }
+
+        #[inline]
+        pub(crate) unsafe fn as_mut(&mut self) -> &mut u8 {
+            self.0.as_mut()
+        }
+    }
 
     impl From<&[u8]> for BytePointer {
         #[inline]
@@ -150,7 +174,6 @@ mod byte_pointer {
     }
 }
 
-#[cfg(test)]
 mod offset {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub(crate) struct Offset(u8);
