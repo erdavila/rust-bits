@@ -114,6 +114,11 @@ mod typed_pointer {
         pub(crate) fn as_ptr(self) -> *const P {
             self.0.as_ptr()
         }
+
+        #[inline]
+        pub(crate) fn as_mut_ptr(self) -> *mut P {
+            self.0.as_ptr()
+        }
     }
 
     impl<P: BitsPrimitive> From<UntypedPointer> for TypedPointer<P> {
@@ -216,18 +221,8 @@ mod bit_pointer {
         }
 
         #[inline]
-        pub(crate) fn set_elem_ptr(&mut self, elem_ptr: TypedPointer<P>) {
-            self.0 = elem_ptr;
-        }
-
-        #[inline]
         pub(crate) fn offset(self) -> Offset<P> {
             self.1
-        }
-
-        #[inline]
-        pub(crate) fn set_offset(&mut self, value: Offset<P>) {
-            self.1 = value;
         }
     }
 }

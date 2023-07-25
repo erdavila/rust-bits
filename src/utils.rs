@@ -58,7 +58,7 @@ pub(crate) fn required_primitive_elements(
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct CountedBits<P: BitsPrimitive> {
     pub(crate) bits: P,
     pub(crate) count: usize,
@@ -73,14 +73,15 @@ impl<P: BitsPrimitive> CountedBits<P> {
         Self { bits, count }
     }
 
-    pub(crate) fn from_usize(bits: CountedBits<usize>) -> Self {
-        debug_assert!(bits.count <= P::BIT_COUNT);
-        Self::with_count(P::from_usize(bits.bits), bits.count)
+    #[inline]
+    pub(crate) fn from_u8(bits: CountedBits<u8>) -> Self {
+        Self::with_count(P::from_u8(bits.bits), bits.count)
     }
 
-    pub(crate) fn to_usize(self) -> CountedBits<usize> {
-        debug_assert!(self.count <= usize::BIT_COUNT);
-        CountedBits::with_count(self.bits.to_usize(), self.count)
+    #[inline]
+    pub(crate) fn to_u8(self) -> CountedBits<u8> {
+        debug_assert!(self.count <= u8::BIT_COUNT);
+        CountedBits::with_count(self.bits.to_u8(), self.count)
     }
 
     pub(crate) fn pop_lsb(&mut self, bit_count: usize) -> Self {
@@ -113,6 +114,7 @@ impl<P: BitsPrimitive> CountedBits<P> {
         self.count += 1;
     }
 
+    #[inline]
     pub(crate) fn drop_lsb(&mut self, bit_count: usize) {
         self.bits >>= bit_count;
         self.count -= bit_count;
@@ -128,6 +130,12 @@ impl<P: BitsPrimitive> CountedBits<P> {
 
     pub(crate) fn clear(&mut self) {
         *self = Self::new();
+    }
+
+    pub(crate) fn clear_uncounted_bits(&mut self) {
+        if self.count < P::BIT_COUNT {
+            self.bits &= BitPattern::new_with_zeros().and_ones(self.count).get();
+        }
     }
 
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, format: char) -> std::fmt::Result {

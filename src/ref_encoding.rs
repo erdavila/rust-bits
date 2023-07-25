@@ -133,52 +133,80 @@ pub(crate) mod bit_pointer {
 }
 
 pub(crate) mod byte_pointer {
+    use super::pointer::Pointer;
+
+    pub(crate) type BytePointer = Pointer<u8>;
+}
+
+pub(crate) mod pointer {
     use std::ptr::NonNull;
 
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub(crate) struct BytePointer(NonNull<u8>);
+    use crate::BitsPrimitive;
 
-    impl BytePointer {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(crate) struct Pointer<P: BitsPrimitive>(NonNull<P>);
+
+    impl<P: BitsPrimitive> Pointer<P> {
         #[inline]
-        pub(crate) unsafe fn read(self) -> u8 {
+        pub(crate) unsafe fn read(self) -> P {
             self.0.as_ptr().read()
+        }
+
+        #[inline]
+        pub(crate) unsafe fn write(&self, value: P) {
+            self.0.as_ptr().write(value);
         }
 
         #[inline]
         pub(crate) unsafe fn add(&self, count: usize) -> Self {
             let ptr = NonNull::new_unchecked(self.0.as_ptr().add(count));
-            BytePointer(ptr)
+            Pointer(ptr)
         }
 
         #[inline]
-        pub(crate) unsafe fn as_mut(&mut self) -> &mut u8 {
+        pub(crate) unsafe fn as_mut(&mut self) -> &mut P {
             self.0.as_mut()
         }
     }
 
-    impl From<&[u8]> for BytePointer {
+    impl<P: BitsPrimitive> From<&[P]> for Pointer<P> {
         #[inline]
-        fn from(value: &[u8]) -> Self {
-            BytePointer(NonNull::from(value).cast())
+        fn from(value: &[P]) -> Self {
+            Pointer(NonNull::from(value).cast())
         }
     }
 
-    impl From<&u8> for BytePointer {
+    impl<P: BitsPrimitive> From<&mut [P]> for Pointer<P> {
         #[inline]
-        fn from(value: &u8) -> Self {
-            BytePointer(NonNull::from(value))
+        fn from(value: &mut [P]) -> Self {
+            Pointer(NonNull::from(value).cast())
         }
     }
 
-    impl From<&mut u8> for BytePointer {
+    impl<P: BitsPrimitive> From<&P> for Pointer<P> {
         #[inline]
-        fn from(value: &mut u8) -> Self {
-            BytePointer(NonNull::from(value))
+        fn from(value: &P) -> Self {
+            Pointer(NonNull::from(value))
+        }
+    }
+
+    impl<P: BitsPrimitive> From<&mut P> for Pointer<P> {
+        #[inline]
+        fn from(value: &mut P) -> Self {
+            Pointer(NonNull::from(value))
+        }
+    }
+
+    impl<P: BitsPrimitive> From<*mut P> for Pointer<P> {
+        #[inline]
+        fn from(value: *mut P) -> Self {
+            let ptr = unsafe { NonNull::new_unchecked(value) };
+            Pointer(ptr)
         }
     }
 }
 
-mod offset {
+pub(crate) mod offset {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub(crate) struct Offset(u8);
 

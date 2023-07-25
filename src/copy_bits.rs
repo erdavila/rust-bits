@@ -1,277 +1,289 @@
 use std::cmp;
 
-use crate::refrepr::{BitPointer, Offset, TypedPointer};
+#[cfg(test)]
+use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::pointer::Pointer;
+use crate::refrepr::BitPointer as LegacyBitPointer;
 use crate::utils::{BitPattern, CountedBits};
 use crate::BitsPrimitive;
 
-/// Copies bits.
-///
-/// # Panics
-///
-/// It panics in any of the following conditions:
-/// * the source bits range defined by the `src_offset` and `bit_count`
-/// parameters are not fully in the `src` slice;
-/// * the destination bits range defined by the `dst_offset` and `bit_count`
-/// parameters are not fully in the `dst` slice;
-pub fn copy_bits<S: BitsPrimitive, D: BitsPrimitive>(
-    src: &[S],
-    src_offset: usize,
-    dst: &mut [D],
-    dst_offset: usize,
+#[inline]
+fn copy_bits_loop<S: BitsPrimitive, D: BitsPrimitive>(src: Source<S>, mut dst: Destination<D>) {
+    for bits in src {
+        dst.write(bits);
+    }
+
+    dst.write_remainder();
+}
+
+struct Source<P: BitsPrimitive> {
+    ptr: Pointer<P>,
+    offset: usize,
     bit_count: usize,
-) {
-    assert!(
-        validate_range(src, src_offset, bit_count),
-        "the source bits range must be fully contained in the source slice"
-    );
-    assert!(
-        validate_range(dst, dst_offset, bit_count),
-        "the destination bits range must be fully contained in the destination slice"
-    );
+    buffer: CountedBits<P>,
+}
+#[cfg(test)]
+impl Source<u8> {
+    #[inline]
+    unsafe fn bits(bit_ptr: BitPointer, bit_count: usize) -> Self {
+        Source {
+            ptr: bit_ptr.byte_ptr(),
+            offset: bit_ptr.offset().value(),
+            bit_count,
+            buffer: CountedBits::new(),
+        }
+    }
+}
+#[cfg(test)]
+impl<P: BitsPrimitive> Source<P> {
+    #[inline]
+    unsafe fn primitives(ptr: Pointer<P>, count: usize) -> Self {
+        Self::primitives_partial(ptr, count * P::BIT_COUNT)
+    }
 
-    let src = BitPointer::new_normalized(src.into(), src_offset);
-    let dst = BitPointer::new_normalized(dst.into(), dst_offset);
+    #[inline]
+    unsafe fn primitives_partial(ptr: Pointer<P>, bit_count: usize) -> Self {
+        Source {
+            ptr,
+            offset: 0,
+            bit_count,
+            buffer: CountedBits::new(),
+        }
+    }
+}
+impl<P: BitsPrimitive> Iterator for Source<P> {
+    type Item = CountedBits<u8>;
 
-    unsafe {
-        copy_bits_ptr(src, dst, bit_count);
-    };
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.bit_count > 0).then(|| {
+            if self.buffer.count == 0 {
+                let primitive = unsafe { self.ptr.read() };
+                self.ptr = unsafe { self.ptr.add(1) };
+
+                self.buffer = CountedBits::from(primitive);
+                if self.offset > 0 {
+                    self.buffer.drop_lsb(self.offset);
+                    self.offset = 0;
+                }
+            }
+
+            let wanted_bits_count = cmp::min(self.bit_count, u8::BIT_COUNT);
+            let mut result = self.buffer.pop_lsb(wanted_bits_count).to_u8();
+            self.bit_count -= result.count;
+
+            result.clear_uncounted_bits();
+            result
+        })
+    }
+}
+
+struct Destination<P: BitsPrimitive> {
+    ptr: Pointer<P>,
+    offset: usize,
+    buffer: CountedBits<P>,
+}
+impl Destination<u8> {
+    #[cfg(test)]
+    #[inline]
+    unsafe fn bits(bit_ptr: BitPointer) -> Self {
+        Destination {
+            ptr: bit_ptr.byte_ptr(),
+            offset: bit_ptr.offset().value(),
+            buffer: CountedBits::new(),
+        }
+    }
+}
+impl<P: BitsPrimitive> Destination<P> {
+    #[cfg(test)]
+    #[inline]
+    unsafe fn primitives(ptr: Pointer<P>) -> Self {
+        Destination {
+            ptr,
+            offset: 0,
+            buffer: CountedBits::new(),
+        }
+    }
+
+    fn write(&mut self, mut bits: CountedBits<u8>) {
+        let bits_to_write = P::BIT_COUNT - self.offset;
+        if self.buffer.count + bits.count >= bits_to_write {
+            let moved_bits = bits.pop_lsb(bits_to_write - self.buffer.count);
+            self.buffer.push_msb(CountedBits::from_u8(moved_bits));
+
+            if self.offset > 0 {
+                let primitive_ref = unsafe { self.ptr.as_mut() };
+                *primitive_ref &= BitPattern::new_with_zeros().and_ones(self.offset).get();
+                *primitive_ref |= self.buffer.bits << self.offset;
+            } else {
+                unsafe { self.ptr.write(self.buffer.bits) };
+            }
+
+            self.ptr = unsafe { self.ptr.add(1) };
+            self.offset = 0;
+            self.buffer = CountedBits::from_u8(bits);
+        } else {
+            self.buffer.push_msb(CountedBits::from_u8(bits));
+        }
+    }
+
+    fn write_remainder(mut self) {
+        if self.buffer.count > 0 {
+            let primitive_ref = unsafe { self.ptr.as_mut() };
+            *primitive_ref &= BitPattern::new_with_ones()
+                .and_zeros(self.buffer.count)
+                .and_ones(self.offset)
+                .get();
+            *primitive_ref |= self.buffer.bits << self.offset;
+        }
+    }
 }
 
 pub(crate) unsafe fn copy_bits_ptr<S: BitsPrimitive, D: BitsPrimitive>(
-    src: BitPointer<S>,
-    dst: BitPointer<D>,
-    mut bit_count: usize,
+    src: LegacyBitPointer<S>,
+    dst: LegacyBitPointer<D>,
+    bit_count: usize,
 ) {
     if bit_count == 0 {
         return;
     }
 
-    let mut source = Source::new(src);
-    let mut destination = Destination::new(dst);
+    let source = Source {
+        ptr: Pointer::from(src.elem_ptr().as_mut_ptr()),
+        offset: src.offset().value(),
+        bit_count,
+        buffer: CountedBits::new(),
+    };
 
-    while bit_count > 0 {
-        let bits = source.read(bit_count);
-        bit_count -= bits.count;
-        destination.write(bits);
-    }
+    let destination = Destination {
+        ptr: Pointer::from(dst.elem_ptr().as_mut_ptr()),
+        offset: dst.offset().value(),
+        buffer: CountedBits::new(),
+    };
 
-    destination.write_remainder();
-}
-
-fn validate_range<P: BitsPrimitive>(data: &[P], offset: usize, bit_count: usize) -> bool {
-    let slice_bit_count = data.len() * P::BIT_COUNT;
-    let bit_range_end = offset + bit_count;
-    bit_range_end <= slice_bit_count
-}
-
-struct Source<P: BitsPrimitive> {
-    ptr: TypedPointer<P>,
-    buffer: CountedBits<P>,
-}
-
-impl<P: BitsPrimitive> Source<P> {
-    pub fn new(bit_ptr: BitPointer<P>) -> Self {
-        let ptr = bit_ptr.elem_ptr();
-        let mut buffer = CountedBits::from(unsafe { ptr.read() });
-        buffer.drop_lsb(bit_ptr.offset().value());
-
-        Source { ptr, buffer }
-    }
-
-    pub fn read(&mut self, bit_count: usize) -> CountedBits<usize> {
-        if self.buffer.count == 0 {
-            let bits = unsafe {
-                self.ptr = self.ptr.add(1);
-                self.ptr.read()
-            };
-            self.buffer = CountedBits::from(bits);
-        }
-
-        let to_return = self.buffer.pop_lsb(cmp::min(bit_count, usize::BIT_COUNT));
-        to_return.to_usize()
-    }
-}
-
-struct Destination<P: BitsPrimitive> {
-    bit_ptr: BitPointer<P>,
-    buffer: CountedBits<P>,
-}
-
-impl<P: BitsPrimitive> Destination<P> {
-    pub fn new(bit_ptr: BitPointer<P>) -> Self {
-        Destination {
-            bit_ptr,
-            buffer: CountedBits::new(),
-        }
-    }
-
-    pub fn write(&mut self, mut bits: CountedBits<usize>) {
-        while bits.count > 0 {
-            let popped_bits = bits.pop_lsb(self.buffer.room());
-            let popped_bits = CountedBits::from_usize(popped_bits);
-            self.buffer.push_msb(popped_bits);
-
-            if self.bit_ptr.offset().value() > 0 {
-                let bit_count_to_write = P::BIT_COUNT - self.bit_ptr.offset().value();
-                if self.buffer.count >= bit_count_to_write {
-                    let bits_to_write = self.buffer.pop_lsb(bit_count_to_write);
-                    debug_assert!(bits_to_write.count == bit_count_to_write);
-                    self.write_next_elem_keeping_surrounding_bits(bits_to_write);
-                }
-            } else if self.buffer.is_full() {
-                self.write_next_elem(self.buffer.bits);
-                self.buffer.clear();
-            }
-        }
-    }
-
-    pub fn write_remainder(mut self) {
-        if self.buffer.count > 0 {
-            self.write_next_elem_keeping_surrounding_bits(self.buffer);
-        }
-    }
-
-    fn write_next_elem(&mut self, bits: P) {
-        unsafe {
-            self.bit_ptr.elem_ptr().write(bits);
-            self.bit_ptr.set_elem_ptr(self.bit_ptr.elem_ptr().add(1));
-        }
-    }
-
-    fn write_next_elem_keeping_surrounding_bits(&mut self, bits: CountedBits<P>) {
-        let lsb_keep_bit_count = self.bit_ptr.offset();
-
-        let mut elem_bits = unsafe { self.bit_ptr.elem_ptr().read() };
-        elem_bits &= BitPattern::new_with_ones()
-            .and_zeros(bits.count)
-            .and_ones(lsb_keep_bit_count.value())
-            .get();
-        elem_bits |= bits.bits << self.bit_ptr.offset().value();
-        self.write_next_elem(elem_bits);
-
-        self.bit_ptr.set_offset(Offset::new(0));
-    }
+    copy_bits_loop(source, destination);
 }
 
 #[cfg(test)]
 mod tests {
-    use std::slice;
+    mod source {
+        use crate::copy_bits::Source;
+        use crate::ref_encoding::bit_pointer::BitPointer;
+        use crate::ref_encoding::byte_pointer::BytePointer;
+        use crate::ref_encoding::pointer::Pointer;
+        use crate::utils::CountedBits;
 
-    use crate::BitsPrimitive;
+        #[test]
+        fn bits_aligned() {
+            let bits = [0xEF, 0xCD];
+            let byte_ptr = BytePointer::from(bits.as_slice());
+            let bit_ptr = BitPointer::new_normalized(byte_ptr, 0);
 
-    use super::copy_bits;
+            let mut source = unsafe { Source::bits(bit_ptr, 16) };
 
-    #[test]
-    fn validate_range() {
-        fn test_type<P: BitsPrimitive>() {
-            use super::validate_range;
-
-            assert!(validate_range(&[P::ZERO; 0], 0, 0));
-            assert!(!validate_range(&[P::ZERO; 0], 0, 1));
-            assert!(!validate_range(&[P::ZERO; 0], 1, 0));
-
-            assert!(validate_range(&[P::ZERO; 1], 0, 0));
-            assert!(validate_range(&[P::ZERO; 1], 0, P::BIT_COUNT));
-            assert!(!validate_range(&[P::ZERO; 1], 0, P::BIT_COUNT + 1));
-            assert!(validate_range(&[P::ZERO; 1], P::BIT_COUNT - 1, 0));
-            assert!(validate_range(&[P::ZERO; 1], P::BIT_COUNT - 1, 1));
-            assert!(!validate_range(&[P::ZERO; 1], P::BIT_COUNT - 1, 2));
-            assert!(validate_range(&[P::ZERO; 1], P::BIT_COUNT, 0));
-            assert!(!validate_range(&[P::ZERO; 1], P::BIT_COUNT, 1));
-            assert!(!validate_range(&[P::ZERO; 1], P::BIT_COUNT + 1, 0));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xEF, 8)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xCD, 8)));
+            assert_eq!(source.next(), None);
         }
 
-        test_type::<usize>();
-        test_type::<u8>();
-        test_type::<u16>();
-        test_type::<u32>();
-        test_type::<u64>();
-        test_type::<u128>();
-    }
+        #[test]
+        fn bits_unaligned() {
+            let bits = [0xEF, 0xCD, 0xAB, 0x89];
+            let byte_ptr = BytePointer::from(bits.as_slice());
+            let bit_ptr = BitPointer::new_normalized(byte_ptr, 4);
 
-    #[test]
-    fn trivial() {
-        macro_rules! assert_copy {
-            ($type:ty) => {
-                let src: $type = 0x_7766554433221100_FEDCBA9876543210_u128 as $type;
-                let mut dst: $type = 0;
+            let mut source = unsafe { Source::bits(bit_ptr, 24) };
 
-                copy_bits(
-                    slice::from_ref(&src),
-                    0,
-                    slice::from_mut(&mut dst),
-                    0,
-                    <$type>::BIT_COUNT,
-                );
-
-                assert_eq!(dst, src);
-            };
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xE, 4)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xCD, 8)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xAB, 8)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0x9, 4)));
+            assert_eq!(source.next(), None);
         }
 
-        assert_copy!(usize);
-        assert_copy!(u8);
-        assert_copy!(u16);
-        assert_copy!(u32);
-        assert_copy!(u64);
-        assert_copy!(u128);
-    }
+        #[test]
+        fn bits_single() {
+            let bits = 0b01101100u8;
+            let byte_ptr = BytePointer::from(&bits);
+            let bit_ptr = BitPointer::new_normalized(byte_ptr, 2);
 
-    #[test]
-    fn multiple_elements() {
-        macro_rules! assert_copy {
-            ($type:ty) => {
-                let src: [$type; 2] = [
-                    0x_7766554433221100_FEDCBA9876543210_u128 as $type,
-                    0x_5444333222111000_FFEEDDCCBBAA9988_u128 as $type,
-                ];
-                let mut dst: [$type; 2] = [0, 0];
+            let mut source = unsafe { Source::bits(bit_ptr, 4) };
 
-                copy_bits(&src, 0, &mut dst, 0, 2 * <$type>::BIT_COUNT);
-
-                assert_eq!(dst, src);
-            };
+            assert_eq!(source.next(), Some(CountedBits::with_count(0b1011, 4)));
+            assert_eq!(source.next(), None);
         }
 
-        assert_copy!(usize);
-        assert_copy!(u8);
-        assert_copy!(u16);
-        assert_copy!(u32);
-        assert_copy!(u64);
-        assert_copy!(u128);
+        #[test]
+        fn bits_empty() {
+            let byte_ptr = BytePointer::from([].as_slice());
+            let bit_ptr = BitPointer::new_normalized(byte_ptr, 2);
+
+            let mut source = unsafe { Source::bits(bit_ptr, 0) };
+
+            assert_eq!(source.next(), None);
+        }
+
+        #[test]
+        fn primitives() {
+            let primitives: [u16; 2] = [0xCDEF, 0x89AB];
+            let ptr = Pointer::from(primitives.as_slice());
+
+            let mut source = unsafe { Source::primitives(ptr, 2) };
+
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xEF, 8)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xCD, 8)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0xAB, 8)));
+            assert_eq!(source.next(), Some(CountedBits::with_count(0x89, 8)));
+            assert_eq!(source.next(), None);
+        }
     }
 
-    #[test]
-    fn small_to_large() {
-        let src = [0xEFu8, 0xCDu8, 0xABu8, 0x89u8]; // In memory: 89ABCDEF
-        let mut dst = 0x_7766554433221100_FEDCBA9876543210_u128;
+    mod destination {
+        use crate::copy_bits::Destination;
+        use crate::ref_encoding::bit_pointer::BitPointer;
+        use crate::ref_encoding::pointer::Pointer;
+        use crate::utils::CountedBits;
 
-        copy_bits(&src, 4, slice::from_mut(&mut dst), 52, 24);
+        #[test]
+        fn bits_multiple() {
+            let mut bits = [0x89, 0x67, 0x45, 0x23];
+            let bit_ptr = BitPointer::new_normalized(Pointer::from(bits.as_mut_slice()), 4);
 
-        assert_eq!(dst, 0x_77665544332219AB_CDECBA9876543210_u128);
-    }
+            let mut destination = unsafe { Destination::bits(bit_ptr) };
+            destination.write(CountedBits::with_count(0xEF, 8));
+            destination.write(CountedBits::with_count(0xD, 4));
+            destination.write(CountedBits::with_count(0xBC, 8));
+            destination.write(CountedBits::with_count(0xA, 4));
+            destination.write_remainder();
 
-    #[test]
-    fn large_to_small() {
-        let src = 0x_7766554433221100_FEDCBA9876543210_u128;
-        let mut dst: [u8; 14] = [
-            0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x89, 0x67, 0x45, 0x23, 0x01, 0xEF, 0xCD, 0xAB,
-        ]; // In memory: ABCDEF0123456789AABBCCDDEEFF
+            assert_eq!(bits, [0xF9, 0xDE, 0xBC, 0x2A]);
+        }
 
-        copy_bits(slice::from_ref(&src), 12, &mut dst, 4, 104);
+        #[test]
+        fn bits_single() {
+            let mut bits = 0b10010011u8;
+            let bit_ptr = BitPointer::new_normalized(Pointer::from(&mut bits), 2);
 
-        assert_eq!(
-            dst,
-            [0x3F, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0xA6]
-        ); // In memory: A6554433221100FEDCBA9876543F
-    }
+            let mut destination = unsafe { Destination::bits(bit_ptr) };
+            destination.write(CountedBits::with_count(0b1, 1));
+            destination.write(CountedBits::with_count(0b101, 3));
+            destination.write_remainder();
 
-    #[test]
-    fn large_offsets() {
-        let src: [u8; 3] = [0xBA, 0xDC, 0xFE]; // In memory: FEDCBA
-        let mut dst: [u16; 2] = [0x5432, 0x9876]; // In memory: 98765432
+            assert_eq!(bits, 0b10101111u8);
+        }
 
-        copy_bits(&src, 12, &mut dst, 20, 8);
+        #[test]
+        fn primitives() {
+            let mut primitives = [0x6789u16, 0x2345u16];
+            let ptr = Pointer::from(primitives.as_mut_slice());
 
-        assert_eq!(dst, [0x5432, 0x9ED6]); // In memory: 9ED65432
+            let mut destination = unsafe { Destination::primitives(ptr) };
+            destination.write(CountedBits::with_count(0xF, 4));
+            destination.write(CountedBits::with_count(0xDE, 8));
+            destination.write(CountedBits::with_count(0xC, 4));
+            destination.write(CountedBits::with_count(0xAB, 8));
+            destination.write_remainder();
+
+            assert_eq!(primitives, [0xCDEFu16, 0x23ABu16]);
+        }
     }
 }
