@@ -8,15 +8,14 @@ use std::ops::{
 
 use crate::copy_bits::copy_bits_ptr;
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
+use crate::ref_encoding::{RefComponents, RefRepr};
 use crate::refrepr::{
-    BitPointer, Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents,
-    UntypedRefComponents,
+    BitPointer, Offset, RefComponentsSelector, RefRepr as LegacyRefRepr, TypedPointer,
+    TypedRefComponents, UntypedRefComponents,
 };
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
-use crate::{
-    Bit, BitString, BitValue, BitsPrimitive, LegacyBitAccessor, LegacyPrimitiveAccessor, Primitive,
-};
+use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 mod fmt;
 
@@ -65,7 +64,7 @@ impl BitStr {
     }
 
     #[inline]
-    fn new_repr<U: BitsPrimitive>(under: &[U]) -> RefRepr {
+    fn new_repr<U: BitsPrimitive>(under: &[U]) -> LegacyRefRepr {
         let components = TypedRefComponents {
             bit_ptr: BitPointer::new_normalized(under.into(), 0),
             bit_count: under.len() * U::BIT_COUNT,
@@ -76,7 +75,7 @@ impl BitStr {
     /// Returns the number of referenced bits.
     #[inline]
     pub fn len(&self) -> usize {
-        let repr: RefRepr = unsafe { std::mem::transmute(self) };
+        let repr: LegacyRefRepr = unsafe { std::mem::transmute(self) };
         repr.decode().metadata.bit_count
     }
 
@@ -91,20 +90,14 @@ impl BitStr {
     /// `None` is returned if the index is out of bounds.
     #[inline]
     pub fn get(&self, index: usize) -> Option<BitValue> {
-        struct Selector;
-        impl OnRangeSelector for Selector {
-            type Output = BitValue;
-            #[inline]
-            fn select<U: BitsPrimitive>(
-                self,
-                range_ref_components: TypedRefComponents<U>,
-            ) -> Self::Output {
-                let accessor = LegacyBitAccessor::new(range_ref_components.bit_ptr);
+        Self::on_range(
+            index..(index + 1),
+            self.ref_components(),
+            |range_ref_components| {
+                let accessor = BitAccessor::new(range_ref_components.bit_ptr);
                 accessor.get()
-            }
-        }
-
-        select_on_range(index..(index + 1), self.ref_components(), Selector)
+            },
+        )
     }
 
     /// Returns a reference to a bit.
@@ -150,23 +143,13 @@ impl BitStr {
 
     #[inline]
     pub fn get_primitive<P: BitsPrimitive>(&self, first_bit_index: usize) -> Option<P> {
-        struct Selector<P>(PhantomData<P>);
-        impl<P: BitsPrimitive> OnRangeSelector for Selector<P> {
-            type Output = P;
-            #[inline]
-            fn select<U: BitsPrimitive>(
-                self,
-                range_ref_components: TypedRefComponents<U>,
-            ) -> Self::Output {
-                let accessor = LegacyPrimitiveAccessor::<P, U>::new(range_ref_components.bit_ptr);
-                accessor.get()
-            }
-        }
-
-        select_on_range(
+        Self::on_range(
             first_bit_index..(first_bit_index + P::BIT_COUNT),
             self.ref_components(),
-            Selector(PhantomData),
+            |range_ref_components| {
+                let accessor = PrimitiveAccessor::new(range_ref_components.bit_ptr);
+                accessor.get()
+            },
         )
     }
 
@@ -196,33 +179,40 @@ impl BitStr {
     #[inline]
     fn get_range_ref_repr<R: RangeBounds<usize>>(&self, range: R) -> Option<RefRepr> {
         let components = self.ref_components();
-        let range = resolve_range(range, components.metadata.bit_count);
+        let range = resolve_range(range, components.bit_count);
+        Self::on_range(range, components, |range_ref_components| {
+            range_ref_components.encode()
+        })
+    }
 
-        struct Selector;
-        impl OnRangeSelector for Selector {
-            type Output = RefRepr;
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                components.encode()
-            }
-        }
+    #[inline]
+    fn on_range<F, R>(range: Range<usize>, components: RefComponents, f: F) -> Option<R>
+    where
+        F: FnOnce(RefComponents) -> R,
+    {
+        (range.start <= range.end && range.end <= components.bit_count).then(|| {
+            let range_ref_components = RefComponents {
+                bit_ptr: components.bit_ptr.add_offset(range.start),
+                bit_count: range.len(),
+            };
 
-        select_on_range(range, components, Selector)
+            f(range_ref_components)
+        })
     }
 
     #[inline]
     pub fn iter(&self) -> Iter {
-        Iter(RawIter::from(self.ref_components()))
+        Iter(RawIter::from(self.legacy_ref_components()))
     }
 
     #[inline]
     pub fn iter_ref(&self) -> IterRef {
-        IterRef(RawIter::from(self.ref_components()))
+        IterRef(RawIter::from(self.legacy_ref_components()))
     }
 
     #[inline]
     pub fn iter_mut(&mut self) -> IterMut {
-        IterMut(RawIter::from(self.ref_components()))
+        IterMut(RawIter::from(self.legacy_ref_components()))
     }
 
     #[inline]
@@ -238,15 +228,15 @@ impl BitStr {
     }
 
     #[inline]
-    fn split_at_repr(&self, index: usize) -> (RefRepr, RefRepr) {
-        let components = self.ref_components();
+    fn split_at_repr(&self, index: usize) -> (LegacyRefRepr, LegacyRefRepr) {
+        let components = self.legacy_ref_components();
 
         assert!(index <= components.metadata.bit_count, "invalid index");
 
         components.select({
             struct Selector(usize);
             impl RefComponentsSelector for Selector {
-                type Output = (RefRepr, RefRepr);
+                type Output = (LegacyRefRepr, LegacyRefRepr);
                 #[inline]
                 fn select<U: BitsPrimitive>(
                     self,
@@ -270,7 +260,7 @@ impl BitStr {
 
     #[inline]
     fn only_zeros(&self) -> bool {
-        self.ref_components().select({
+        self.legacy_ref_components().select({
             struct Selector;
             impl RefComponentsSelector for Selector {
                 type Output = bool;
@@ -338,8 +328,14 @@ impl BitStr {
     }
 
     #[inline]
-    pub(crate) fn ref_components(&self) -> UntypedRefComponents {
+    pub(crate) fn ref_components(&self) -> RefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
+        repr.decode()
+    }
+
+    #[inline]
+    pub(crate) fn legacy_ref_components(&self) -> UntypedRefComponents {
+        let repr: LegacyRefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
     }
 
@@ -399,40 +395,6 @@ fn resolve_range<R: RangeBounds<usize>>(range: R, len: usize) -> Range<usize> {
     };
 
     start..end
-}
-
-#[inline]
-fn select_on_range<S: OnRangeSelector>(
-    range: Range<usize>,
-    components: UntypedRefComponents,
-    selector: S,
-) -> Option<S::Output> {
-    (range.start <= range.end && range.end <= components.metadata.bit_count).then(|| {
-        struct InnerSelector<S> {
-            range: Range<usize>,
-            selector: S,
-        }
-        impl<S: OnRangeSelector> RefComponentsSelector for InnerSelector<S> {
-            type Output = S::Output;
-
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let components = TypedRefComponents {
-                    bit_ptr: components.bit_ptr.add_offset(self.range.start),
-                    bit_count: self.range.len(),
-                };
-                self.selector.select(components)
-            }
-        }
-
-        components.select(InnerSelector { range, selector })
-    })
-}
-
-trait OnRangeSelector {
-    type Output;
-
-    fn select<U: BitsPrimitive>(self, range_ref_components: TypedRefComponents<U>) -> Self::Output;
 }
 
 macro_rules! impl_index {
@@ -719,7 +681,7 @@ pub struct NumericValue<'a>(&'a BitStr);
 impl<'a> NumericValue<'a> {
     #[inline]
     pub fn get_lower_bits_primitive<P: BitsPrimitive>(&self) -> P {
-        self.0.ref_components().select({
+        self.0.legacy_ref_components().select({
             struct Selector<P>(PhantomData<P>);
             impl<P: BitsPrimitive> RefComponentsSelector for Selector<P> {
                 type Output = P;

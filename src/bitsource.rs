@@ -128,7 +128,7 @@ impl BitSource for &BitStr {
 
     #[inline]
     unsafe fn copy_bits_to<D: BitsPrimitive>(&self, dst: TypedPointer<D>, offset: usize) {
-        self.ref_components().select({
+        self.legacy_ref_components().select({
             struct Selector<D: BitsPrimitive>(BitPointer<D>);
             impl<D: BitsPrimitive> RefComponentsSelector for Selector<D> {
                 type Output = ();

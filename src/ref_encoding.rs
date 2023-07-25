@@ -1,4 +1,3 @@
-#[cfg(test)]
 use crate::utils::max_value_for_bit_count;
 use crate::utils::CountedBits;
 use crate::BitsPrimitive;
@@ -13,7 +12,6 @@ pub(crate) struct RefRepr {
     metadata: EncodedMetadata,
 }
 impl RefRepr {
-    #[cfg(test)]
     #[inline]
     fn encode(components: RefComponents) -> Self {
         let metadata = Metadata {
@@ -42,7 +40,6 @@ struct Metadata {
     bit_count: usize,
 }
 impl Metadata {
-    #[cfg(test)]
     #[inline]
     fn encode(self) -> EncodedMetadata {
         let max_bit_count = EncodedMetadata::MAX_BIT_COUNT;
@@ -68,7 +65,6 @@ impl EncodedMetadata {
 
     #[cfg(test)]
     const MAX_OFFSET: usize = max_value_for_bit_count(Self::OFFSET_BIT_COUNT);
-    #[cfg(test)]
     const MAX_BIT_COUNT: usize = max_value_for_bit_count(Self::BIT_COUNT_BIT_COUNT);
 
     #[inline]
@@ -89,7 +85,6 @@ pub(crate) struct RefComponents {
     pub(crate) bit_ptr: BitPointer,
     pub(crate) bit_count: usize,
 }
-#[cfg(test)]
 impl RefComponents {
     #[inline]
     pub(crate) fn encode(self) -> RefRepr {
@@ -98,7 +93,6 @@ impl RefComponents {
 }
 
 pub(crate) mod bit_pointer {
-    #[cfg(test)]
     use crate::BitsPrimitive;
 
     use super::byte_pointer::BytePointer;
@@ -113,7 +107,6 @@ pub(crate) mod bit_pointer {
             BitPointer(byte_ptr, offset)
         }
 
-        #[cfg(test)]
         #[inline]
         pub(crate) fn new_normalized(byte_ptr: BytePointer, offset: usize) -> Self {
             let index = offset / u8::BIT_COUNT;
@@ -130,6 +123,11 @@ pub(crate) mod bit_pointer {
         #[inline]
         pub(crate) fn offset(self) -> Offset {
             self.1
+        }
+
+        #[inline]
+        pub(crate) fn add_offset(self, count: usize) -> Self {
+            BitPointer::new_normalized(self.byte_ptr(), self.offset().value() + count)
         }
     }
 }
