@@ -1,4 +1,4 @@
-use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
+use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, CountedBits};
 use crate::{BitsPrimitive, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 
 const DISCRIMINANT_BIT_COUNT: usize = 3;
@@ -30,7 +30,7 @@ impl RefRepr {
                 "bit_count too large for underlying type"
             );
 
-            let metadata = metadata.encode(bit_counts.offset_bit_count);
+            let metadata = metadata.encode(bit_counts);
             RefRepr { ptr, metadata }
         }
 
@@ -266,7 +266,7 @@ impl EncodedMetadata {
 
         let offset = metadata_bits.pop(bit_counts.offset_bit_count);
 
-        let bit_count = metadata_bits.0;
+        let bit_count = metadata_bits.pop(bit_counts.bit_count_bit_count);
 
         Metadata {
             underlying_primitive: discriminant,
@@ -284,14 +284,15 @@ pub(crate) struct Metadata {
 }
 
 impl Metadata {
-    fn encode(self, offset_bit_count: usize) -> EncodedMetadata {
-        let mut metadata_bits = MetadataBits::from(self.bit_count);
-        metadata_bits.push(self.offset, offset_bit_count);
+    fn encode(self, bit_counts: ComponentsBitCounts) -> EncodedMetadata {
+        let mut metadata_bits = MetadataBits::new();
+        metadata_bits.push(self.bit_count, bit_counts.bit_count_bit_count);
+        metadata_bits.push(self.offset, bit_counts.offset_bit_count);
         metadata_bits.push(
             encode_discriminant(self.underlying_primitive),
             DISCRIMINANT_BIT_COUNT,
         );
-        EncodedMetadata(metadata_bits.0)
+        EncodedMetadata(metadata_bits.0.bits)
     }
 }
 
@@ -393,29 +394,29 @@ impl From<BitsPrimitiveDiscriminant> for ComponentsBitCounts {
     }
 }
 
-struct MetadataBits(usize);
+struct MetadataBits(CountedBits<usize>);
 
 impl MetadataBits {
     #[inline]
+    fn new() -> Self {
+        MetadataBits(CountedBits::new())
+    }
+
+    #[inline]
     fn push(&mut self, bits: usize, bit_count: usize) {
-        self.0 = (self.0 << bit_count) | bits;
+        self.0.push_lsb(CountedBits::with_count(bits, bit_count));
     }
 
     #[inline]
     fn pop(&mut self, bit_count: usize) -> usize {
-        let mask = BitPattern::<usize>::new_with_zeros()
-            .and_ones(bit_count)
-            .get();
-        let popped = self.0 & mask;
-        self.0 >>= bit_count;
-        popped
+        self.0.pop_lsb(bit_count).bits
     }
 }
 
 impl From<usize> for MetadataBits {
     #[inline]
     fn from(value: usize) -> Self {
-        MetadataBits(value)
+        MetadataBits(CountedBits::from(value))
     }
 }
 

@@ -1,6 +1,6 @@
 use std::fmt::{Binary, Debug, LowerHex, UpperHex};
 use std::hash::Hash;
-use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr, ShrAssign};
+use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Not, Shl, ShlAssign, Shr, ShrAssign};
 
 /// Represents a basic element whose bits can be manipulated and referenced.
 ///
@@ -16,6 +16,7 @@ where
     Self: Not<Output = Self>,
     Self: Shl<usize, Output = Self>,
     Self: Shr<usize, Output = Self>,
+    Self: ShlAssign<usize>,
     Self: ShrAssign<usize>,
 {
     const DISCRIMINANT: BitsPrimitiveDiscriminant;

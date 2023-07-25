@@ -95,6 +95,12 @@ impl<P: BitsPrimitive> CountedBits<P> {
         }
     }
 
+    pub(crate) fn push_lsb(&mut self, bits: Self) {
+        self.bits <<= bits.count;
+        self.bits |= bits.bits;
+        self.count += bits.count;
+    }
+
     pub(crate) fn push_msb(&mut self, bits: Self) {
         self.bits |= bits.bits << self.count;
         self.count += bits.count;
