@@ -1,11 +1,11 @@
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 
-use crate::refrepr::{
-    BitPointer, RefRepr, TypedRefComponents, UntypedPointer, UntypedRefComponents,
-};
-use crate::{Bit, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector, LegacyBitAccessor};
-use crate::{BitStr, BitsPrimitive, LegacyPrimitiveAccessor, Primitive};
+use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::byte_pointer::BytePointer;
+use crate::ref_encoding::{RefComponents, RefRepr};
+use crate::{Bit, BitAccessor, BitValue, PrimitiveAccessor};
+use crate::{BitStr, BitsPrimitive, Primitive};
 
 pub trait BitIterator<'a>:
     Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator + Sized
@@ -45,21 +45,21 @@ pub trait BitIterator<'a>:
 }
 
 pub(crate) struct RawIter<'a> {
-    ptr: UntypedPointer,
-    underlying_primitive: BitsPrimitiveDiscriminant,
+    byte_ptr: BytePointer,
     start_offset: usize,
     end_offset: usize,
     phantom: PhantomData<&'a ()>,
 }
-impl<'a> From<UntypedRefComponents> for RawIter<'a> {
+impl<'a> From<RefComponents> for RawIter<'a> {
     #[inline]
-    fn from(components: UntypedRefComponents) -> Self {
-        let metadata = components.metadata;
+    fn from(components: RefComponents) -> Self {
+        let byte_ptr = components.bit_ptr.byte_ptr();
+        let start_offset = components.bit_ptr.offset().value();
+        let end_offset = start_offset + components.bit_count;
         RawIter {
-            ptr: components.ptr,
-            underlying_primitive: metadata.underlying_primitive,
-            start_offset: metadata.offset,
-            end_offset: metadata.offset + metadata.bit_count,
+            byte_ptr,
+            start_offset,
+            end_offset,
             phantom: PhantomData,
         }
     }
@@ -74,12 +74,11 @@ impl<'a> RawIter<'a> {
     #[inline]
     fn next_at_front<F, R>(&mut self, bit_count: usize, f: F) -> Option<R>
     where
-        F: FnOnce(SelectOutputArgs) -> R,
+        F: FnOnce(NextOutputArgs) -> R,
     {
         (bit_count <= self.len()).then(|| {
-            let args = SelectOutputArgs {
-                ptr: self.ptr,
-                underlying_primitive: self.underlying_primitive,
+            let args = NextOutputArgs {
+                byte_ptr: self.byte_ptr,
                 offset: self.start_offset,
                 bit_count,
             };
@@ -92,13 +91,12 @@ impl<'a> RawIter<'a> {
     #[inline]
     fn next_at_back<F, R>(&mut self, bit_count: usize, f: F) -> Option<R>
     where
-        F: FnOnce(SelectOutputArgs) -> R,
+        F: FnOnce(NextOutputArgs) -> R,
     {
         (bit_count <= self.len()).then(|| {
             self.end_offset -= bit_count;
-            let args = SelectOutputArgs {
-                ptr: self.ptr,
-                underlying_primitive: self.underlying_primitive,
+            let args = NextOutputArgs {
+                byte_ptr: self.byte_ptr,
                 offset: self.end_offset,
                 bit_count,
             };
@@ -112,9 +110,8 @@ impl<'a> RawIter<'a> {
     }
 }
 
-struct SelectOutputArgs {
-    ptr: UntypedPointer,
-    underlying_primitive: BitsPrimitiveDiscriminant,
+struct NextOutputArgs {
+    byte_ptr: BytePointer,
     offset: usize,
     bit_count: usize,
 }
@@ -130,13 +127,13 @@ impl<'a> Iterator for Iter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_at_front(1, select_bit_value)
+        self.0.next_at_front(1, next_bit_value)
     }
 }
 impl<'a> DoubleEndedIterator for Iter<'a> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.0.next_at_back(1, select_bit_value)
+        self.0.next_at_back(1, next_bit_value)
     }
 }
 impl<'a> BitIterator<'a> for Iter<'a> {
@@ -145,25 +142,25 @@ impl<'a> BitIterator<'a> for Iter<'a> {
 
     #[inline]
     fn next_primitive<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
-        self.0.next_at_front(P::BIT_COUNT, select_primitive::<P>)
+        self.0.next_at_front(P::BIT_COUNT, next_primitive::<P>)
     }
 
     #[inline]
     fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
-        self.0.next_at_back(P::BIT_COUNT, select_primitive::<P>)
+        self.0.next_at_back(P::BIT_COUNT, next_primitive::<P>)
     }
 
     #[inline]
     fn next_n(&mut self, len: usize) -> Option<Self::SliceItem> {
         self.0
-            .next_at_front(len, select_ref_repr)
+            .next_at_front(len, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem> {
         self.0
-            .next_at_back(len, select_ref_repr)
+            .next_at_back(len, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
@@ -182,14 +179,14 @@ impl<'a> Iterator for IterRef<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.0
-            .next_at_front(1, select_ref_repr)
+            .next_at_front(1, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
 impl<'a> DoubleEndedIterator for IterRef<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0
-            .next_at_back(1, select_ref_repr)
+            .next_at_back(1, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
@@ -200,28 +197,28 @@ impl<'a> BitIterator<'a> for IterRef<'a> {
     #[inline]
     fn next_primitive<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
         self.0
-            .next_at_front(P::BIT_COUNT, select_ref_repr)
+            .next_at_front(P::BIT_COUNT, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
         self.0
-            .next_at_back(P::BIT_COUNT, select_ref_repr)
+            .next_at_back(P::BIT_COUNT, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_n(&mut self, len: usize) -> Option<Self::SliceItem> {
         self.0
-            .next_at_front(len, select_ref_repr)
+            .next_at_front(len, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem> {
         self.0
-            .next_at_back(len, select_ref_repr)
+            .next_at_back(len, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
@@ -240,14 +237,14 @@ impl<'a> Iterator for IterMut<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.0
-            .next_at_front(1, select_ref_repr)
+            .next_at_front(1, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
 impl<'a> DoubleEndedIterator for IterMut<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0
-            .next_at_back(1, select_ref_repr)
+            .next_at_back(1, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
@@ -258,28 +255,28 @@ impl<'a> BitIterator<'a> for IterMut<'a> {
     #[inline]
     fn next_primitive<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
         self.0
-            .next_at_front(P::BIT_COUNT, select_ref_repr)
+            .next_at_front(P::BIT_COUNT, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_primitive_back<P: BitsPrimitive + 'a>(&mut self) -> Option<Self::PrimitiveItem<P>> {
         self.0
-            .next_at_back(P::BIT_COUNT, select_ref_repr)
+            .next_at_back(P::BIT_COUNT, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_n(&mut self, len: usize) -> Option<Self::SliceItem> {
         self.0
-            .next_at_front(len, select_ref_repr)
+            .next_at_front(len, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 
     #[inline]
     fn next_n_back(&mut self, len: usize) -> Option<Self::SliceItem> {
         self.0
-            .next_at_back(len, select_ref_repr)
+            .next_at_back(len, next_ref_repr)
             .map(|repr| unsafe { std::mem::transmute(repr) })
     }
 }
@@ -287,78 +284,26 @@ impl<'a> ExactSizeIterator for IterMut<'a> {}
 impl<'a> FusedIterator for IterMut<'a> {}
 
 #[inline]
-fn select_bit_value(args: SelectOutputArgs) -> BitValue {
-    args.underlying_primitive.select({
-        struct Selector {
-            ptr: UntypedPointer,
-            offset: usize,
-        }
-        impl BitsPrimitiveSelector for Selector {
-            type Output = BitValue;
-            #[inline]
-            fn select<U: crate::BitsPrimitive>(self) -> Self::Output {
-                let bit_ptr = BitPointer::new_normalized(self.ptr.as_typed::<U>(), self.offset);
-                let accessor = LegacyBitAccessor::new(bit_ptr);
-                accessor.get()
-            }
-        }
-        Selector {
-            ptr: args.ptr,
-            offset: args.offset,
-        }
-    })
+fn next_bit_value(args: NextOutputArgs) -> BitValue {
+    let bit_ptr = BitPointer::new_normalized(args.byte_ptr, args.offset);
+    let accessor = BitAccessor::new(bit_ptr);
+    accessor.get()
 }
 
 #[inline]
-fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
-    args.underlying_primitive.select({
-        struct Selector<P> {
-            ptr: UntypedPointer,
-            offset: usize,
-            phantom: PhantomData<P>,
-        }
-        impl<P: BitsPrimitive> BitsPrimitiveSelector for Selector<P> {
-            type Output = P;
-            #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let bit_ptr = BitPointer::new_normalized(self.ptr.as_typed(), self.offset);
-                let accessor = LegacyPrimitiveAccessor::<P, U>::new(bit_ptr);
-                accessor.get()
-            }
-        }
-        Selector::<P> {
-            ptr: args.ptr,
-            offset: args.offset,
-            phantom: PhantomData,
-        }
-    })
+fn next_primitive<P: BitsPrimitive>(args: NextOutputArgs) -> P {
+    let bit_ptr = BitPointer::new_normalized(args.byte_ptr, args.offset);
+    let accessor = PrimitiveAccessor::new(bit_ptr);
+    accessor.get()
 }
 
 #[inline]
-fn select_ref_repr(args: SelectOutputArgs) -> RefRepr {
-    args.underlying_primitive.select({
-        struct Selector {
-            ptr: UntypedPointer,
-            offset: usize,
-            bit_count: usize,
-        }
-        impl BitsPrimitiveSelector for Selector {
-            type Output = RefRepr;
-            #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let components = TypedRefComponents {
-                    bit_ptr: BitPointer::new_normalized(self.ptr.as_typed::<U>(), self.offset),
-                    bit_count: self.bit_count,
-                };
-                components.encode()
-            }
-        }
-        Selector {
-            ptr: args.ptr,
-            offset: args.offset,
-            bit_count: args.bit_count,
-        }
-    })
+fn next_ref_repr(args: NextOutputArgs) -> RefRepr {
+    let components = RefComponents {
+        bit_ptr: BitPointer::new_normalized(args.byte_ptr, args.offset),
+        bit_count: args.bit_count,
+    };
+    components.encode()
 }
 
 pub struct ReverseIter<'a, I: BitIterator<'a>> {

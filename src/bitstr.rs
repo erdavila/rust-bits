@@ -199,17 +199,17 @@ impl BitStr {
 
     #[inline]
     pub fn iter(&self) -> Iter {
-        Iter(RawIter::from(self.legacy_ref_components()))
+        Iter(RawIter::from(self.ref_components()))
     }
 
     #[inline]
     pub fn iter_ref(&self) -> IterRef {
-        IterRef(RawIter::from(self.legacy_ref_components()))
+        IterRef(RawIter::from(self.ref_components()))
     }
 
     #[inline]
     pub fn iter_mut(&mut self) -> IterMut {
-        IterMut(RawIter::from(self.legacy_ref_components()))
+        IterMut(RawIter::from(self.ref_components()))
     }
 
     #[inline]
