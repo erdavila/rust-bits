@@ -5,7 +5,7 @@ use crate::refrepr::{
     BitPointer, RefRepr, TypedRefComponents, UntypedPointer, UntypedRefComponents,
 };
 use crate::{Bit, BitValue, BitsPrimitiveDiscriminant, BitsPrimitiveSelector, LegacyBitAccessor};
-use crate::{BitStr, BitsPrimitive, Primitive, PrimitiveAccessor};
+use crate::{BitStr, BitsPrimitive, LegacyPrimitiveAccessor, Primitive};
 
 pub trait BitIterator<'a>:
     Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator + Sized
@@ -322,7 +322,7 @@ fn select_primitive<P: BitsPrimitive>(args: SelectOutputArgs) -> P {
             #[inline]
             fn select<U: BitsPrimitive>(self) -> Self::Output {
                 let bit_ptr = BitPointer::new_normalized(self.ptr.as_typed(), self.offset);
-                let accessor = PrimitiveAccessor::<P, U>::new(bit_ptr);
+                let accessor = LegacyPrimitiveAccessor::<P, U>::new(bit_ptr);
                 accessor.get()
             }
         }

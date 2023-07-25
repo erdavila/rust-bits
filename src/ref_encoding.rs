@@ -146,7 +146,6 @@ pub(crate) mod byte_pointer {
             self.0.as_ptr().read()
         }
 
-        #[cfg(test)]
         #[inline]
         pub(crate) unsafe fn add(&self, count: usize) -> Self {
             let ptr = NonNull::new_unchecked(self.0.as_ptr().add(count));
@@ -169,6 +168,13 @@ pub(crate) mod byte_pointer {
     impl From<&u8> for BytePointer {
         #[inline]
         fn from(value: &u8) -> Self {
+            BytePointer(NonNull::from(value))
+        }
+    }
+
+    impl From<&mut u8> for BytePointer {
+        #[inline]
+        fn from(value: &mut u8) -> Self {
             BytePointer(NonNull::from(value))
         }
     }

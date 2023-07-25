@@ -2,9 +2,11 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 
 use crate::copy_bits::copy_bits_ptr;
-use crate::refrepr::{
-    BitPointer, RefComponentsSelector, RefRepr, TypedRefComponents, UntypedRefComponents,
-};
+use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::{RefComponents, RefRepr};
+use crate::refrepr::BitPointer as LegacyBitPointer;
+use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
+use crate::utils::{BitPattern, CountedBits};
 use crate::{BitStr, BitsPrimitive};
 
 #[repr(C)]
@@ -17,65 +19,36 @@ pub struct Primitive<P: BitsPrimitive> {
 impl<P: BitsPrimitive> Primitive<P> {
     #[inline]
     pub fn read(&self) -> P {
-        struct Selector<P>(PhantomData<P>);
-        impl<P: BitsPrimitive> RefComponentsSelector for Selector<P> {
-            type Output = P;
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, _>::new(components.bit_ptr);
-                accessor.get()
-            }
-        }
-
-        self.components().select(Selector::<P>(PhantomData))
+        self.accessor().get()
     }
 
     #[inline]
     pub fn write(&mut self, value: P) -> P {
-        struct Selector<P> {
-            value: P,
-        }
-        impl<P: BitsPrimitive> RefComponentsSelector for Selector<P> {
-            type Output = P;
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor = PrimitiveAccessor::<P, _>::new(components.bit_ptr);
-                let previous_value = accessor.get();
-                accessor.set(self.value);
-                previous_value
-            }
-        }
-
-        self.components().select(Selector { value })
+        let mut accessor = self.accessor();
+        let previous_value = accessor.get();
+        accessor.set(value);
+        previous_value
     }
 
     #[inline]
     pub fn modify<F: FnOnce(P) -> P>(&mut self, f: F) {
-        struct Selector<P, F> {
-            f: F,
-            phantom: PhantomData<P>,
-        }
-        impl<P: BitsPrimitive, F: FnOnce(P) -> P> RefComponentsSelector for Selector<P, F> {
-            type Output = ();
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let mut accessor = PrimitiveAccessor::<P, _>::new(components.bit_ptr);
-                let previous_value = accessor.get();
-                let new_value = (self.f)(previous_value);
-                accessor.set(new_value);
-            }
-        }
-
-        self.components().select(Selector::<P, F> {
-            f,
-            phantom: PhantomData,
-        });
+        let mut accessor = self.accessor();
+        let previous_value = accessor.get();
+        let new_value = f(previous_value);
+        accessor.set(new_value);
     }
 
     #[inline]
-    fn components(&self) -> UntypedRefComponents {
+    fn accessor(&self) -> PrimitiveAccessor<P> {
+        let components = self.ref_components();
+        PrimitiveAccessor::new(components.bit_ptr)
+    }
+
+    #[inline]
+    fn ref_components(&self) -> RefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         let components = repr.decode();
-        debug_assert!(components.metadata.bit_count == P::BIT_COUNT);
+        debug_assert!(components.bit_count == P::BIT_COUNT);
         components
     }
 
@@ -90,15 +63,124 @@ impl<P: BitsPrimitive> Primitive<P> {
     }
 }
 
-pub(crate) struct PrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
-    bit_ptr: BitPointer<U>,
+pub(crate) struct PrimitiveAccessor<P: BitsPrimitive> {
+    bit_ptr: BitPointer,
     phantom: PhantomData<P>,
 }
 
-impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
+impl<P: BitsPrimitive> PrimitiveAccessor<P> {
     #[inline]
-    pub(crate) fn new(bit_ptr: BitPointer<U>) -> Self {
+    pub(crate) fn new(bit_ptr: BitPointer) -> Self {
         PrimitiveAccessor {
+            bit_ptr,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get(&self) -> P {
+        let mut bits = CountedBits::new();
+
+        match self.regions() {
+            PrimitiveElementsRegions::Multiple {
+                lsb_element,
+                full_elements,
+                msb_element,
+            } => {
+                let mut read_and_push = |index, offset, bit_count| {
+                    let byte = unsafe { self.bit_ptr.byte_ptr().add(index).read() } >> offset;
+                    bits.push_msb(CountedBits::with_count(P::from_u8(byte), bit_count));
+                };
+
+                if let Some(lsb) = lsb_element {
+                    read_and_push(0, lsb.bit_offset, lsb.bit_count);
+                }
+
+                if let Some(full) = full_elements {
+                    for index in full.indexes {
+                        read_and_push(index, 0, u8::BIT_COUNT);
+                    }
+                }
+
+                if let Some(msb) = msb_element {
+                    read_and_push(msb.index, 0, msb.bit_count);
+                }
+            }
+            PrimitiveElementsRegions::Single {
+                bit_offset: _,
+                bit_count: _,
+            } => unreachable!(),
+        }
+
+        debug_assert_eq!(bits.count, P::BIT_COUNT);
+        bits.bits
+    }
+
+    #[inline]
+    fn set(&mut self, value: P) {
+        let mut bits = CountedBits::from(value);
+
+        match self.regions() {
+            PrimitiveElementsRegions::Multiple {
+                lsb_element,
+                full_elements,
+                msb_element,
+            } => {
+                let mut pop_and_write = |index, bit_count, offset| {
+                    let byte = bits.pop_lsb(bit_count).bits.to_u8() << offset;
+
+                    unsafe {
+                        let mut ptr = self.bit_ptr.byte_ptr().add(index);
+                        let byte_ref = ptr.as_mut();
+                        if bit_count == u8::BIT_COUNT {
+                            *byte_ref = byte;
+                        } else {
+                            *byte_ref &= BitPattern::<u8>::new_with_ones()
+                                .and_zeros(bit_count)
+                                .and_ones(offset)
+                                .get();
+                            *byte_ref |= byte;
+                        }
+                    }
+                };
+
+                if let Some(lsb) = lsb_element {
+                    pop_and_write(0, lsb.bit_count, lsb.bit_offset);
+                }
+
+                if let Some(full) = full_elements {
+                    for index in full.indexes {
+                        pop_and_write(index, u8::BIT_COUNT, 0);
+                    }
+                }
+
+                if let Some(msb) = msb_element {
+                    pop_and_write(msb.index, msb.bit_count, 0);
+                }
+            }
+            PrimitiveElementsRegions::Single {
+                bit_offset: _,
+                bit_count: _,
+            } => unreachable!(),
+        }
+
+        debug_assert_eq!(bits.count, 0);
+    }
+
+    fn regions(&self) -> PrimitiveElementsRegions {
+        PrimitiveElementsRegions::new(self.bit_ptr.offset().value(), P::BIT_COUNT, u8::BIT_COUNT)
+    }
+}
+
+pub(crate) struct LegacyPrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
+    bit_ptr: LegacyBitPointer<U>,
+    phantom: PhantomData<P>,
+}
+
+impl<P: BitsPrimitive, U: BitsPrimitive> LegacyPrimitiveAccessor<P, U> {
+    #[inline]
+    pub(crate) fn new(bit_ptr: LegacyBitPointer<U>) -> Self {
+        LegacyPrimitiveAccessor {
             bit_ptr,
             phantom: PhantomData,
         }
@@ -109,22 +191,12 @@ impl<P: BitsPrimitive, U: BitsPrimitive> PrimitiveAccessor<P, U> {
         let mut value = P::ZERO;
 
         let src = self.bit_ptr;
-        let dst = BitPointer::new_normalized((&mut value).into(), 0);
+        let dst = LegacyBitPointer::new_normalized((&mut value).into(), 0);
         unsafe {
             copy_bits_ptr(src, dst, P::BIT_COUNT);
         }
 
         value
-    }
-
-    #[inline]
-    fn set(&mut self, value: P) {
-        let src = BitPointer::new_normalized((&value).into(), 0);
-        let dst = self.bit_ptr;
-
-        unsafe {
-            copy_bits_ptr(src, dst, P::BIT_COUNT);
-        }
     }
 }
 
@@ -167,24 +239,22 @@ impl<P: BitsPrimitive> AsMut<BitStr> for Primitive<P> {
 mod tests {
     use std::ops::Not;
 
-    use crate::refrepr::{BitPointer, RefRepr, TypedRefComponents};
+    use crate::ref_encoding::bit_pointer::BitPointer;
+    use crate::ref_encoding::{RefComponents, RefRepr};
     use crate::{BitStr, BitsPrimitive, Primitive};
 
-    fn new_ref<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> &Primitive<P> {
-        let repr = repr::<P, U>(under, offset);
+    fn new_ref<P: BitsPrimitive>(under: &u8, offset: usize) -> &Primitive<P> {
+        let repr = repr::<P>(under, offset);
         unsafe { std::mem::transmute(repr) }
     }
 
-    fn new_mut<P: BitsPrimitive, U: BitsPrimitive>(
-        under: &mut U,
-        offset: usize,
-    ) -> &mut Primitive<P> {
-        let repr = repr::<P, U>(under, offset);
+    fn new_mut<P: BitsPrimitive>(under: &mut u8, offset: usize) -> &mut Primitive<P> {
+        let repr = repr::<P>(under, offset);
         unsafe { std::mem::transmute(repr) }
     }
 
-    fn repr<P: BitsPrimitive, U: BitsPrimitive>(under: &U, offset: usize) -> RefRepr {
-        let components = TypedRefComponents {
+    fn repr<P: BitsPrimitive>(under: &u8, offset: usize) -> RefRepr {
+        let components = RefComponents {
             bit_ptr: BitPointer::new_normalized(under.into(), offset),
             bit_count: P::BIT_COUNT,
         };
@@ -194,22 +264,45 @@ mod tests {
     #[test]
     fn read() {
         let memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x10]; // In memory:: 10FEDCBA
-        let p_ref: &Primitive<u8> = new_ref(&memory[0], 12);
 
-        let value = p_ref.read();
+        {
+            let p_ref: &Primitive<u16> = new_ref(&memory[0], 8);
 
-        assert_eq!(value, 0xED);
+            let value = p_ref.read();
+
+            assert_eq!(value, 0xFEDC);
+        }
+
+        {
+            let p_ref: &Primitive<u16> = new_ref(&memory[0], 4);
+
+            let value = p_ref.read();
+
+            assert_eq!(value, 0xEDCB);
+        }
     }
 
     #[test]
     fn write() {
         let mut memory: [u8; 4] = [0xBA, 0xDC, 0xFE, 0x10]; // In memory:: 10FEDCBA
-        let p_ref: &mut Primitive<u8> = new_mut(&mut memory[0], 12);
 
-        let previous_value = p_ref.write(0x76);
+        {
+            let p_ref: &mut Primitive<u16> = new_mut(&mut memory[0], 8);
 
-        assert_eq!(previous_value, 0xED);
-        assert_eq!(memory, [0xBA, 0x6C, 0xF7, 0x10]); // In memory: 10F76CBA
+            let previous_value = p_ref.write(0x9876);
+
+            assert_eq!(previous_value, 0xFEDC);
+            assert_eq!(memory, [0xBA, 0x76, 0x98, 0x10]); // In memory: 109876BA
+        }
+
+        {
+            let p_ref: &mut Primitive<u16> = new_mut(&mut memory[0], 4);
+
+            let previous_value = p_ref.write(0x5432);
+
+            assert_eq!(previous_value, 0x876B);
+            assert_eq!(memory, [0x2A, 0x43, 0x95, 0x10]); // In memory: 1095432A
+        }
     }
 
     #[test]

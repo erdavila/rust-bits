@@ -16,7 +16,9 @@ use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{
     required_primitive_elements_for_type, required_primitive_elements_typed, CountedBits,
 };
-use crate::{BitSource, BitStr, BitValue, BitsPrimitive, LegacyBitAccessor, PrimitiveAccessor};
+use crate::{
+    BitSource, BitStr, BitValue, BitsPrimitive, LegacyBitAccessor, LegacyPrimitiveAccessor,
+};
 
 #[derive(Clone)]
 pub struct BitString {
@@ -754,7 +756,7 @@ impl IntoIter {
 
     #[inline]
     fn get_primitive<P: BitsPrimitive>(params: IntoIterNextItemParams) -> P {
-        let accessor = PrimitiveAccessor::<P, _>::new(params.bit_ptr);
+        let accessor = LegacyPrimitiveAccessor::<P, _>::new(params.bit_ptr);
         accessor.get()
     }
 

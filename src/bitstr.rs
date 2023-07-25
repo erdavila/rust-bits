@@ -15,7 +15,7 @@ use crate::refrepr::{
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{
-    Bit, BitString, BitValue, BitsPrimitive, LegacyBitAccessor, Primitive, PrimitiveAccessor,
+    Bit, BitString, BitValue, BitsPrimitive, LegacyBitAccessor, LegacyPrimitiveAccessor, Primitive,
 };
 
 mod fmt;
@@ -158,7 +158,7 @@ impl BitStr {
                 self,
                 range_ref_components: TypedRefComponents<U>,
             ) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, U>::new(range_ref_components.bit_ptr);
+                let accessor = LegacyPrimitiveAccessor::<P, U>::new(range_ref_components.bit_ptr);
                 accessor.get()
             }
         }

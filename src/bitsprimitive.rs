@@ -24,6 +24,8 @@ where
     const ZERO: Self;
     const ONE: Self;
 
+    fn from_u8(value: u8) -> Self;
+    fn to_u8(self) -> u8;
     fn from_usize(value: usize) -> Self;
     fn to_usize(self) -> usize;
 }
@@ -36,6 +38,14 @@ macro_rules! impl_primitive {
             const BIT_COUNT: usize = <$type>::BITS as usize;
             const ZERO: Self = 0;
             const ONE: Self = 1;
+
+            fn from_u8(value: u8) -> Self {
+                value as Self
+            }
+
+            fn to_u8(self) -> u8 {
+                self as u8
+            }
 
             fn from_usize(value: usize) -> Self {
                 value as Self
