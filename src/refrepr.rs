@@ -1,16 +1,6 @@
 use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, CountedBits};
 use crate::{BitsPrimitive, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
 
-const DISCRIMINANT_BIT_COUNT: usize = 3;
-const ALL_DISCRIMINANTS: [BitsPrimitiveDiscriminant; 6] = [
-    BitsPrimitiveDiscriminant::Usize,
-    BitsPrimitiveDiscriminant::U8,
-    BitsPrimitiveDiscriminant::U16,
-    BitsPrimitiveDiscriminant::U32,
-    BitsPrimitiveDiscriminant::U64,
-    BitsPrimitiveDiscriminant::U128,
-];
-
 #[repr(C)]
 pub(crate) struct RefRepr {
     ptr: UntypedPointer,
@@ -260,12 +250,10 @@ impl EncodedMetadata {
     pub(crate) fn decode(&self) -> Metadata {
         let mut metadata_bits = MetadataBits::from(self.0);
 
-        let encoded_discriminant = metadata_bits.pop(DISCRIMINANT_BIT_COUNT);
-        let discriminant = decode_discriminant(encoded_discriminant);
+        let discriminant = BitsPrimitiveDiscriminant::U8;
         let bit_counts = ComponentsBitCounts::from(discriminant);
 
         let offset = metadata_bits.pop(bit_counts.offset_bit_count);
-
         let bit_count = metadata_bits.pop(bit_counts.bit_count_bit_count);
 
         Metadata {
@@ -288,10 +276,6 @@ impl Metadata {
         let mut metadata_bits = MetadataBits::new();
         metadata_bits.push(self.bit_count, bit_counts.bit_count_bit_count);
         metadata_bits.push(self.offset, bit_counts.offset_bit_count);
-        metadata_bits.push(
-            encode_discriminant(self.underlying_primitive),
-            DISCRIMINANT_BIT_COUNT,
-        );
         EncodedMetadata(metadata_bits.0.bits)
     }
 }
@@ -368,7 +352,7 @@ impl ComponentsBitCounts {
     #[inline]
     fn new_with_primitive_bit_count(primitive_bit_count: usize) -> Self {
         let offset_bit_count = values_count_to_bit_count(primitive_bit_count);
-        let bit_count_bit_count = usize::BIT_COUNT - DISCRIMINANT_BIT_COUNT - offset_bit_count;
+        let bit_count_bit_count = usize::BIT_COUNT - offset_bit_count;
 
         ComponentsBitCounts {
             offset_bit_count,
@@ -420,59 +404,20 @@ impl From<usize> for MetadataBits {
     }
 }
 
-#[inline]
-fn encode_discriminant(discr: BitsPrimitiveDiscriminant) -> usize {
-    discr as usize
-}
-
-#[inline]
-fn decode_discriminant(bits: usize) -> BitsPrimitiveDiscriminant {
-    ALL_DISCRIMINANTS
-        .iter()
-        .cloned()
-        .find(|discr| encode_discriminant(*discr) == bits)
-        .unwrap()
-}
-
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
-    use crate::refrepr::{
-        encode_discriminant, BitPointer, EncodedMetadata, Offset, TypedRefComponents,
-        DISCRIMINANT_BIT_COUNT,
-    };
+    use crate::refrepr::{BitPointer, EncodedMetadata, Offset, TypedRefComponents};
     use crate::utils::{max_value_for_bit_count, values_count_to_bit_count, BitPattern};
     use crate::BitsPrimitive;
 
-    use super::{ComponentsBitCounts, ALL_DISCRIMINANTS};
-
-    #[test]
-    fn discriminant_encoding() {
-        let max = max_value_for_bit_count(DISCRIMINANT_BIT_COUNT);
-        for discr in ALL_DISCRIMINANTS {
-            let bits = encode_discriminant(discr);
-            assert!(bits <= max);
-        }
-
-        let set: HashSet<_> = ALL_DISCRIMINANTS
-            .iter()
-            .map(|d| encode_discriminant(*d))
-            .collect();
-        assert_eq!(
-            set.len(),
-            ALL_DISCRIMINANTS.len(),
-            "the encoded value must be unique for every Discriminant"
-        );
-    }
+    use super::ComponentsBitCounts;
 
     #[test]
     fn components_bit_counts() {
         macro_rules! assert_type {
             ($type:ty) => {
                 let expected_offset_bit_count = values_count_to_bit_count(<$type>::BIT_COUNT);
-                let expected_bit_count_bit_count =
-                    usize::BIT_COUNT - DISCRIMINANT_BIT_COUNT - expected_offset_bit_count;
+                let expected_bit_count_bit_count = usize::BIT_COUNT - expected_offset_bit_count;
 
                 let components_bit_counts = ComponentsBitCounts::from(<$type>::DISCRIMINANT);
 
@@ -550,10 +495,7 @@ mod tests {
     fn metadata_encoding_limits() {
         macro_rules! assert_metadata_encoding {
             ($type:ty, $offset_and_bit_count_bits:expr, $expected_offset:expr, $expected_bit_count:expr) => {
-                let encoded_metadata = EncodedMetadata(
-                    ($offset_and_bit_count_bits << DISCRIMINANT_BIT_COUNT)
-                        | encode_discriminant(<$type>::DISCRIMINANT),
-                );
+                let encoded_metadata = EncodedMetadata($offset_and_bit_count_bits);
 
                 let metadata = encoded_metadata.decode();
 
