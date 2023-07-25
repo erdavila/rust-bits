@@ -7,9 +7,7 @@ use std::ops::{
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::refrepr::{
-    BitPointer, RefRepr as LegacyRefRepr, TypedRefComponents, UntypedRefComponents,
-};
+use crate::refrepr::{BitPointer, RefRepr as LegacyRefRepr, TypedRefComponents};
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
@@ -299,12 +297,6 @@ impl BitStr {
     #[inline]
     pub(crate) fn ref_components(&self) -> RefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
-        repr.decode()
-    }
-
-    #[inline]
-    pub(crate) fn legacy_ref_components(&self) -> UntypedRefComponents {
-        let repr: LegacyRefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
     }
 

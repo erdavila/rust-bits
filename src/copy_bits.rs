@@ -6,6 +6,13 @@ use crate::refrepr::BitPointer as LegacyBitPointer;
 use crate::utils::{BitPattern, CountedBits};
 use crate::BitsPrimitive;
 
+#[inline]
+pub(crate) unsafe fn copy_bits(src: BitPointer, dst: BitPointer, bit_count: usize) {
+    let src = Source::bits(src, bit_count);
+    let dst = Destination::bits(dst);
+    copy_bits_loop(src, dst);
+}
+
 pub(crate) unsafe fn copy_bits_to_primitives<P: BitsPrimitive>(
     bit_ptr: BitPointer,
     primitives: &mut [P],
@@ -95,14 +102,14 @@ impl<P: BitsPrimitive> Iterator for Source<P> {
     }
 }
 
-struct Destination<P: BitsPrimitive> {
+pub(crate) struct Destination<P: BitsPrimitive> {
     ptr: Pointer<P>,
     offset: usize,
     buffer: CountedBits<P>,
 }
 impl Destination<u8> {
     #[inline]
-    unsafe fn bits(bit_ptr: BitPointer) -> Self {
+    pub(crate) unsafe fn bits(bit_ptr: BitPointer) -> Self {
         Destination {
             ptr: bit_ptr.byte_ptr(),
             offset: bit_ptr.offset().value(),
@@ -120,7 +127,7 @@ impl<P: BitsPrimitive> Destination<P> {
         }
     }
 
-    fn write(&mut self, mut bits: CountedBits<u8>) {
+    pub(crate) fn write(&mut self, mut bits: CountedBits<u8>) {
         let bits_to_write = P::BIT_COUNT - self.offset;
         if self.buffer.count + bits.count >= bits_to_write {
             let moved_bits = bits.pop_lsb(bits_to_write - self.buffer.count);
@@ -142,7 +149,7 @@ impl<P: BitsPrimitive> Destination<P> {
         }
     }
 
-    fn write_remainder(mut self) {
+    pub(crate) fn write_remainder(mut self) {
         if self.buffer.count > 0 {
             let primitive_ref = unsafe { self.ptr.as_mut() };
             *primitive_ref &= BitPattern::new_with_ones()

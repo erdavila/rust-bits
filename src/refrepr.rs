@@ -49,10 +49,6 @@ impl RefRepr {
 mod untyped_pointer {
     use std::ptr::NonNull;
 
-    use crate::BitsPrimitive;
-
-    use super::TypedPointer;
-
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub(crate) struct UntypedPointer(NonNull<()>);
@@ -61,11 +57,6 @@ mod untyped_pointer {
         #[inline]
         pub(crate) fn ptr(&self) -> NonNull<()> {
             self.0
-        }
-
-        #[inline]
-        pub(crate) fn as_typed<P: BitsPrimitive>(&self) -> TypedPointer<P> {
-            (*self).into()
         }
     }
 
@@ -97,11 +88,6 @@ mod typed_pointer {
         #[inline]
         pub(crate) unsafe fn read(self) -> P {
             self.0.as_ptr().read()
-        }
-
-        #[inline]
-        pub(crate) unsafe fn write(self, value: P) {
-            self.0.as_ptr().write(value);
         }
 
         #[inline]
@@ -269,38 +255,6 @@ impl Metadata {
 pub(crate) struct UntypedRefComponents {
     pub(crate) ptr: UntypedPointer,
     pub(crate) metadata: Metadata,
-}
-
-impl UntypedRefComponents {
-    #[inline]
-    pub(crate) fn select<S: RefComponentsSelector>(self, selector: S) -> S::Output {
-        struct PSelector<S: RefComponentsSelector> {
-            selector: S,
-            untyped_components: UntypedRefComponents,
-        }
-
-        impl<S: RefComponentsSelector> BitsPrimitiveSelector for PSelector<S> {
-            type Output = S::Output;
-
-            #[inline]
-            fn select<U: BitsPrimitive>(self) -> Self::Output {
-                let elem_ptr = self.untyped_components.ptr.as_typed::<U>();
-                let offset = self.untyped_components.metadata.offset;
-
-                let components = TypedRefComponents {
-                    bit_ptr: BitPointer::new_normalized(elem_ptr, offset),
-                    bit_count: self.untyped_components.metadata.bit_count,
-                };
-
-                self.selector.select(components)
-            }
-        }
-
-        self.metadata.underlying_primitive.select(PSelector {
-            selector,
-            untyped_components: self,
-        })
-    }
 }
 
 pub(crate) trait RefComponentsSelector {

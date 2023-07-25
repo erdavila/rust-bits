@@ -99,7 +99,7 @@ pub(crate) mod bit_pointer {
     use super::offset::Offset;
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub(crate) struct BitPointer(BytePointer, Offset);
+    pub struct BitPointer(BytePointer, Offset);
 
     impl BitPointer {
         #[inline]

@@ -11,7 +11,11 @@ use linear_deque::LinearDeque;
 
 use crate::copy_bits::copy_bits_ptr;
 use crate::iter::BitIterator;
-use crate::refrepr::{BitPointer, Offset, RefRepr, TypedPointer, TypedRefComponents};
+use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::pointer::Pointer;
+use crate::refrepr::{
+    BitPointer as LegacyBitPointer, Offset, RefRepr, TypedPointer, TypedRefComponents,
+};
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{
     required_primitive_elements_for_type, required_primitive_elements_typed, CountedBits,
@@ -62,7 +66,7 @@ impl BitString {
     #[inline]
     fn as_repr(&self) -> RefRepr {
         let components = TypedRefComponents {
-            bit_ptr: BitPointer::new(self.buffer.as_ref().into(), self.offset),
+            bit_ptr: LegacyBitPointer::new(self.buffer.as_ref().into(), self.offset),
             bit_count: self.bit_count,
         };
 
@@ -138,7 +142,8 @@ impl<S: BitSource> From<S> for BitString {
         let mut buffer = LinearDeque::new();
         buffer.resize(buffer_elems, 0u8);
 
-        unsafe { source.copy_bits_to(buffer.as_ref().into(), 0) };
+        let bit_ptr = BitPointer::new_normalized(buffer.as_mut().into(), 0);
+        unsafe { source.copy_bits_to(bit_ptr) };
 
         BitString {
             buffer,
@@ -482,9 +487,14 @@ pub trait BitStringEnd<'a> {
 
 pub struct BitStringLsbEnd<'a>(&'a mut BitString);
 impl<'a> BitStringLsbEnd<'a> {
-    fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer<u8>, usize) -> R) -> Option<R> {
+    fn pop_bits<R>(
+        &mut self,
+        bit_count: usize,
+        f: fn(LegacyBitPointer<u8>, usize) -> R,
+    ) -> Option<R> {
         (bit_count <= self.0.bit_count).then(|| {
-            let bit_ptr = BitPointer::new(TypedPointer::from(self.0.buffer.deref()), self.0.offset);
+            let bit_ptr =
+                LegacyBitPointer::new(TypedPointer::from(self.0.buffer.deref()), self.0.offset);
             let value = f(bit_ptr, bit_count);
 
             let mut bits_to_discard = bit_count;
@@ -556,7 +566,11 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
         updated_offset -= pushed_bits_count;
 
         self.0.offset = Offset::new(updated_offset);
-        unsafe { source.copy_bits_to(self.0.buffer.as_ref().into(), updated_offset) };
+
+        let bit_ptr =
+            BitPointer::new_normalized(Pointer::from(self.0.buffer.as_ref()), updated_offset);
+        unsafe { source.copy_bits_to(bit_ptr) };
+
         self.0.bit_count += pushed_bits_count;
     }
 
@@ -583,9 +597,13 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
 
 pub struct BitStringMsbEnd<'a>(&'a mut BitString);
 impl<'a> BitStringMsbEnd<'a> {
-    fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer<u8>, usize) -> R) -> Option<R> {
+    fn pop_bits<R>(
+        &mut self,
+        bit_count: usize,
+        f: fn(LegacyBitPointer<u8>, usize) -> R,
+    ) -> Option<R> {
         (bit_count <= self.0.bit_count).then(|| {
-            let bit_ptr = BitPointer::new_normalized(
+            let bit_ptr = LegacyBitPointer::new_normalized(
                 TypedPointer::from(self.0.buffer.deref()),
                 self.0.offset.value() + self.0.bit_count - bit_count,
             );
@@ -655,12 +673,12 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
                 .resize_at_back(self.0.buffer.len() + additional_elems, 0u8);
         }
 
-        unsafe {
-            source.copy_bits_to(
-                self.0.buffer.as_ref().into(),
-                self.0.offset.value() + self.0.bit_count,
-            )
-        };
+        let bit_ptr = BitPointer::new_normalized(
+            Pointer::from(self.0.buffer.as_mut()),
+            self.0.offset.value() + self.0.bit_count,
+        );
+        unsafe { source.copy_bits_to(bit_ptr) };
+
         self.0.bit_count += pushed_bits_count;
     }
 
@@ -686,28 +704,31 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
 }
 
 #[inline]
-fn get_bit_value_from_bit_str(bit_ptr: BitPointer<u8>, _bit_count: usize) -> BitValue {
+fn get_bit_value_from_bit_str(bit_ptr: LegacyBitPointer<u8>, _bit_count: usize) -> BitValue {
     let accessor = LegacyBitAccessor::new(bit_ptr);
     accessor.get()
 }
 
 #[inline]
-fn get_primitive_from_bit_str<P: BitsPrimitive>(bit_ptr: BitPointer<u8>, _bit_count: usize) -> P {
+fn get_primitive_from_bit_str<P: BitsPrimitive>(
+    bit_ptr: LegacyBitPointer<u8>,
+    _bit_count: usize,
+) -> P {
     let mut value = P::ZERO;
     let src = bit_ptr;
-    let dst = BitPointer::new_normalized(TypedPointer::from(&mut value), 0);
+    let dst = LegacyBitPointer::new_normalized(TypedPointer::from(&mut value), 0);
     unsafe { copy_bits_ptr(src, dst, P::BIT_COUNT) };
     value
 }
 
 #[inline]
-fn get_bit_string_from_bit_str(bit_ptr: BitPointer<u8>, bit_count: usize) -> BitString {
+fn get_bit_string_from_bit_str(bit_ptr: LegacyBitPointer<u8>, bit_count: usize) -> BitString {
     let mut buffer = LinearDeque::new();
     let offset = Offset::new(0);
     let elems_count = required_primitive_elements_typed(offset, bit_count);
     buffer.resize(elems_count, 0u8);
 
-    let dst = BitPointer::new(TypedPointer::from(buffer.deref_mut()), offset);
+    let dst = LegacyBitPointer::new(TypedPointer::from(buffer.deref_mut()), offset);
     unsafe { copy_bits_ptr(bit_ptr, dst, bit_count) };
 
     BitString {
@@ -732,7 +753,7 @@ impl IntoIter {
     fn next_at_front(&mut self, bit_count: usize) -> Option<IntoIterNextItemParams> {
         (bit_count <= self.bit_count()).then(|| {
             let ptr = self.buffer.as_ref().into();
-            let bit_ptr = BitPointer::new_normalized(ptr, self.start_offset);
+            let bit_ptr = LegacyBitPointer::new_normalized(ptr, self.start_offset);
             self.start_offset += bit_count;
             IntoIterNextItemParams { bit_ptr, bit_count }
         })
@@ -743,7 +764,7 @@ impl IntoIter {
         (bit_count <= self.bit_count()).then(|| {
             let ptr = self.buffer.as_ref().into();
             self.end_offset -= bit_count;
-            let bit_ptr = BitPointer::new_normalized(ptr, self.end_offset);
+            let bit_ptr = LegacyBitPointer::new_normalized(ptr, self.end_offset);
             IntoIterNextItemParams { bit_ptr, bit_count }
         })
     }
@@ -767,7 +788,7 @@ impl IntoIter {
         buffer.resize(buffer_elems, 0u8);
 
         let src = params.bit_ptr;
-        let dst = BitPointer::new_normalized(buffer.as_mut().into(), 0);
+        let dst = LegacyBitPointer::new_normalized(buffer.as_mut().into(), 0);
         unsafe {
             copy_bits_ptr(src, dst, params.bit_count);
         }
@@ -828,7 +849,7 @@ impl ExactSizeIterator for IntoIter {}
 impl FusedIterator for IntoIter {}
 
 struct IntoIterNextItemParams {
-    bit_ptr: BitPointer<u8>,
+    bit_ptr: LegacyBitPointer<u8>,
     bit_count: usize,
 }
 
