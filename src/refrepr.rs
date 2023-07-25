@@ -229,11 +229,6 @@ mod bit_pointer {
         pub(crate) fn set_offset(&mut self, value: Offset<P>) {
             self.1 = value;
         }
-
-        #[inline]
-        pub(crate) fn add_offset(self, count: usize) -> Self {
-            BitPointer::new_normalized(self.elem_ptr(), self.offset().value() + count)
-        }
     }
 }
 pub(crate) use bit_pointer::*;

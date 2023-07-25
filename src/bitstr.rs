@@ -228,34 +228,21 @@ impl BitStr {
     }
 
     #[inline]
-    fn split_at_repr(&self, index: usize) -> (LegacyRefRepr, LegacyRefRepr) {
-        let components = self.legacy_ref_components();
+    fn split_at_repr(&self, index: usize) -> (RefRepr, RefRepr) {
+        let components = self.ref_components();
 
-        assert!(index <= components.metadata.bit_count, "invalid index");
+        assert!(index <= components.bit_count, "invalid index");
 
-        components.select({
-            struct Selector(usize);
-            impl RefComponentsSelector for Selector {
-                type Output = (LegacyRefRepr, LegacyRefRepr);
-                #[inline]
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let lsb_components = TypedRefComponents {
-                        bit_ptr: components.bit_ptr,
-                        bit_count: self.0,
-                    };
-                    let msb_components = TypedRefComponents {
-                        bit_ptr: components.bit_ptr.add_offset(self.0),
-                        bit_count: components.bit_count - self.0,
-                    };
-                    (msb_components.encode(), lsb_components.encode())
-                }
-            }
+        let lsb_components = RefComponents {
+            bit_ptr: components.bit_ptr,
+            bit_count: index,
+        };
+        let msb_components = RefComponents {
+            bit_ptr: components.bit_ptr.add_offset(index),
+            bit_count: components.bit_count - index,
+        };
 
-            Selector(index)
-        })
+        (msb_components.encode(), lsb_components.encode())
     }
 
     #[inline]
