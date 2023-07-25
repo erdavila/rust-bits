@@ -1,3 +1,4 @@
+use std::cmp;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
@@ -79,6 +80,11 @@ impl<P: BitsPrimitive> PrimitiveAccessor<P> {
 
     #[inline]
     pub(crate) fn get(&self) -> P {
+        self.get_lower_bits(P::BIT_COUNT)
+    }
+
+    #[inline]
+    pub(crate) fn get_lower_bits(&self, count: usize) -> P {
         let mut bits = CountedBits::new();
 
         match self.regions() {
@@ -86,24 +92,34 @@ impl<P: BitsPrimitive> PrimitiveAccessor<P> {
                 lsb_element,
                 full_elements,
                 msb_element,
-            } => {
-                let mut read_and_push = |index, offset, bit_count| {
-                    let byte = unsafe { self.bit_ptr.byte_ptr().add(index).read() } >> offset;
-                    bits.push_msb(CountedBits::with_count(P::from_u8(byte), bit_count));
-                };
+            } => 'read_and_push: {
+                macro_rules! read_and_push {
+                    ($index:expr, $offset:expr, $bit_count:expr) => {{
+                        let bit_count = cmp::min($bit_count, count - bits.count);
+                        let mut byte = unsafe { self.bit_ptr.byte_ptr().add($index).read() };
+                        byte >>= $offset;
+                        if bit_count != u8::BIT_COUNT {
+                            byte &= BitPattern::<u8>::new_with_zeros().and_ones(bit_count).get();
+                        }
+                        bits.push_msb(CountedBits::with_count(P::from_u8(byte), bit_count));
+                        if bits.count == count {
+                            break 'read_and_push;
+                        }
+                    }};
+                }
 
                 if let Some(lsb) = lsb_element {
-                    read_and_push(0, lsb.bit_offset, lsb.bit_count);
+                    read_and_push!(0, lsb.bit_offset, lsb.bit_count);
                 }
 
                 if let Some(full) = full_elements {
                     for index in full.indexes {
-                        read_and_push(index, 0, u8::BIT_COUNT);
+                        read_and_push!(index, 0, u8::BIT_COUNT);
                     }
                 }
 
                 if let Some(msb) = msb_element {
-                    read_and_push(msb.index, 0, msb.bit_count);
+                    read_and_push!(msb.index, 0, msb.bit_count);
                 }
             }
             PrimitiveElementsRegions::Single {
@@ -112,7 +128,6 @@ impl<P: BitsPrimitive> PrimitiveAccessor<P> {
             } => unreachable!(),
         }
 
-        debug_assert_eq!(bits.count, P::BIT_COUNT);
         bits.bits
     }
 

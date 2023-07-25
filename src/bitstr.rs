@@ -1,17 +1,14 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::ops::{
     Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
     RangeToInclusive,
 };
 
-use crate::copy_bits::copy_bits_ptr;
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::ref_encoding::{RefComponents, RefRepr};
 use crate::refrepr::{
-    BitPointer, Offset, RefComponentsSelector, RefRepr as LegacyRefRepr, TypedPointer,
-    TypedRefComponents, UntypedRefComponents,
+    BitPointer, RefRepr as LegacyRefRepr, TypedRefComponents, UntypedRefComponents,
 };
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
@@ -247,71 +244,56 @@ impl BitStr {
 
     #[inline]
     fn only_zeros(&self) -> bool {
-        self.legacy_ref_components().select({
-            struct Selector;
-            impl RefComponentsSelector for Selector {
-                type Output = bool;
+        let components = self.ref_components();
 
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let regions = PrimitiveElementsRegions::new(
-                        components.bit_ptr.offset().value(),
-                        components.bit_count,
-                        U::BIT_COUNT,
-                    );
+        macro_rules! read_and_test {
+            ($index:expr, $offset:expr, $bit_count:expr) => {{
+                let byte = unsafe { components.bit_ptr.byte_ptr().add($index).read() };
+                let mut bits = byte >> $offset;
+                if $bit_count != u8::BIT_COUNT {
+                    bits &= BitPattern::<u8>::new_with_zeros()
+                        .and_ones($bit_count)
+                        .get();
+                }
+                if bits != 0 {
+                    return false;
+                }
+            }};
+        }
 
-                    let read = |index| unsafe { components.bit_ptr.elem_ptr().add(index).read() };
+        let regions = PrimitiveElementsRegions::new(
+            components.bit_ptr.offset().value(),
+            components.bit_count,
+            u8::BIT_COUNT,
+        );
 
-                    match regions {
-                        PrimitiveElementsRegions::Multiple {
-                            lsb_element,
-                            full_elements,
-                            msb_element,
-                        } => {
-                            if let Some(lsb) = lsb_element {
-                                let mut bits = read(0) >> lsb.bit_offset;
-                                bits &= BitPattern::new_with_zeros().and_ones(lsb.bit_count).get();
-                                if bits != U::ZERO {
-                                    return false;
-                                }
-                            }
+        match regions {
+            PrimitiveElementsRegions::Multiple {
+                lsb_element,
+                full_elements,
+                msb_element,
+            } => {
+                if let Some(lsb) = lsb_element {
+                    read_and_test!(0, lsb.bit_offset, lsb.bit_count);
+                }
 
-                            if let Some(full) = full_elements {
-                                for index in full.indexes {
-                                    let bits = read(index);
-                                    if bits != U::ZERO {
-                                        return false;
-                                    }
-                                }
-                            }
-
-                            if let Some(msb) = msb_element {
-                                let mut bits = read(msb.index);
-                                bits &= BitPattern::new_with_zeros().and_ones(msb.bit_count).get();
-                                if bits != U::ZERO {
-                                    return false;
-                                }
-                            }
-                        }
-                        PrimitiveElementsRegions::Single {
-                            bit_offset,
-                            bit_count,
-                        } => {
-                            let mut bits = read(0) >> bit_offset;
-                            bits &= BitPattern::new_with_zeros().and_ones(bit_count).get();
-                            if bits != U::ZERO {
-                                return false;
-                            }
-                        }
+                if let Some(full) = full_elements {
+                    for index in full.indexes {
+                        read_and_test!(index, 0, u8::BIT_COUNT);
                     }
+                }
 
-                    true
+                if let Some(msb) = msb_element {
+                    read_and_test!(msb.index, 0, msb.bit_count);
                 }
             }
-            Selector
-        })
+            PrimitiveElementsRegions::Single {
+                bit_offset,
+                bit_count,
+            } => read_and_test!(0, bit_offset, bit_count),
+        }
+
+        true
     }
 
     #[inline]
@@ -668,29 +650,11 @@ pub struct NumericValue<'a>(&'a BitStr);
 impl<'a> NumericValue<'a> {
     #[inline]
     pub fn get_lower_bits_primitive<P: BitsPrimitive>(&self) -> P {
-        self.0.legacy_ref_components().select({
-            struct Selector<P>(PhantomData<P>);
-            impl<P: BitsPrimitive> RefComponentsSelector for Selector<P> {
-                type Output = P;
+        let components = self.0.ref_components();
 
-                #[inline]
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let mut result = P::ZERO;
-
-                    let src = components.bit_ptr;
-                    let dst = BitPointer::new(TypedPointer::from(&mut result), Offset::new(0));
-                    let bit_count = cmp::min(P::BIT_COUNT, components.bit_count);
-                    unsafe { copy_bits_ptr(src, dst, bit_count) };
-
-                    result
-                }
-            }
-
-            Selector(PhantomData)
-        })
+        let accessor = PrimitiveAccessor::new(components.bit_ptr);
+        let bit_count = cmp::min(P::BIT_COUNT, components.bit_count);
+        accessor.get_lower_bits(bit_count)
     }
 }
 
@@ -1040,19 +1004,29 @@ mod tests {
             let bit_str_3 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
             let bit_str_4 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
             let bit_str_5 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
-            let bit_str_ne = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+            let bit_str_ne_1 = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+            let bit_str_ne_2 = BitStr::new_ref(&[0b00010011u8, 0b00000110u8, 0b1u8]); // In memory: 00000001_00000110_10010011
+            let bit_str_ne_3 =
+                &BitStr::new_ref(&[0b00010011u8, 0b00000110u8, 0b00000000u8, 0b1u8])[..31]; // In memory: 00000001_00000000_00000110_10010011
+            let bit_str_ne_4 = &BitStr::new_ref(&[0b10010011u8, 0b01000110u8])[..15]; // In memory: 1000110_10010011
 
             assert!(bit_str_1.numeric_value() == bit_str_1.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_2.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_3.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_4.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_5.numeric_value());
-            assert!(bit_str_1.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_2.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_3.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_4.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_5.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_ne.numeric_value() > bit_str_1.numeric_value());
+
+            assert!(bit_str_1.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_2.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_3.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_4.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_5.numeric_value() < bit_str_ne_1.numeric_value());
+
+            assert!(bit_str_1.numeric_value() < bit_str_ne_2.numeric_value());
+            assert!(bit_str_1.numeric_value() < bit_str_ne_3.numeric_value());
+            assert!(bit_str_1.numeric_value() < bit_str_ne_4.numeric_value());
+
+            assert!(bit_str_ne_1.numeric_value() > bit_str_1.numeric_value());
         }
 
         #[test]
