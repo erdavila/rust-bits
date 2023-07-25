@@ -86,11 +86,6 @@ mod typed_pointer {
         }
 
         #[inline]
-        pub(crate) unsafe fn read(self) -> P {
-            self.0.as_ptr().read()
-        }
-
-        #[inline]
         pub(crate) unsafe fn add(self, count: usize) -> Self {
             Self::from(self.0.as_ptr().add(count))
         }
@@ -148,6 +143,20 @@ mod typed_pointer {
             TypedPointer(unsafe { NonNull::new_unchecked(ptr) })
         }
     }
+
+    impl<P: BitsPrimitive> From<TypedPointer<P>> for crate::ref_encoding::pointer::Pointer<P> {
+        #[inline]
+        fn from(value: TypedPointer<P>) -> Self {
+            crate::ref_encoding::pointer::Pointer::from(value.as_mut_ptr())
+        }
+    }
+
+    impl<P: BitsPrimitive> From<crate::ref_encoding::pointer::Pointer<P>> for TypedPointer<P> {
+        #[inline]
+        fn from(mut value: crate::ref_encoding::pointer::Pointer<P>) -> Self {
+            TypedPointer::from(unsafe { value.as_mut() })
+        }
+    }
 }
 pub(crate) use typed_pointer::*;
 
@@ -174,6 +183,20 @@ mod offset {
         #[inline]
         pub(crate) fn value(&self) -> usize {
             self.value
+        }
+    }
+
+    impl From<Offset<u8>> for crate::ref_encoding::offset::Offset {
+        #[inline]
+        fn from(value: Offset<u8>) -> Self {
+            crate::ref_encoding::offset::Offset::new(value.value)
+        }
+    }
+
+    impl From<crate::ref_encoding::offset::Offset> for Offset<u8> {
+        #[inline]
+        fn from(value: crate::ref_encoding::offset::Offset) -> Self {
+            Offset::new(value.value())
         }
     }
 }
@@ -209,6 +232,23 @@ mod bit_pointer {
         #[inline]
         pub(crate) fn offset(self) -> Offset<P> {
             self.1
+        }
+    }
+
+    impl From<BitPointer<u8>> for crate::ref_encoding::bit_pointer::BitPointer {
+        #[inline]
+        fn from(bit_ptr: BitPointer<u8>) -> Self {
+            crate::ref_encoding::bit_pointer::BitPointer::new(
+                bit_ptr.elem_ptr().into(),
+                bit_ptr.offset().into(),
+            )
+        }
+    }
+
+    impl From<crate::ref_encoding::bit_pointer::BitPointer> for BitPointer<u8> {
+        #[inline]
+        fn from(bit_ptr: crate::ref_encoding::bit_pointer::BitPointer) -> Self {
+            BitPointer::new(bit_ptr.byte_ptr().into(), bit_ptr.offset().into())
         }
     }
 }

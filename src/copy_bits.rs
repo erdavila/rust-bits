@@ -2,7 +2,6 @@ use std::cmp;
 
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::pointer::Pointer;
-use crate::refrepr::BitPointer as LegacyBitPointer;
 use crate::utils::{BitPattern, CountedBits};
 use crate::BitsPrimitive;
 
@@ -159,31 +158,6 @@ impl<P: BitsPrimitive> Destination<P> {
             *primitive_ref |= self.buffer.bits << self.offset;
         }
     }
-}
-
-pub(crate) unsafe fn copy_bits_ptr<S: BitsPrimitive, D: BitsPrimitive>(
-    src: LegacyBitPointer<S>,
-    dst: LegacyBitPointer<D>,
-    bit_count: usize,
-) {
-    if bit_count == 0 {
-        return;
-    }
-
-    let source = Source {
-        ptr: Pointer::from(src.elem_ptr().as_mut_ptr()),
-        offset: src.offset().value(),
-        bit_count,
-        buffer: CountedBits::new(),
-    };
-
-    let destination = Destination {
-        ptr: Pointer::from(dst.elem_ptr().as_mut_ptr()),
-        offset: dst.offset().value(),
-        buffer: CountedBits::new(),
-    };
-
-    copy_bits_loop(source, destination);
 }
 
 #[cfg(test)]

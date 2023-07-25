@@ -2,12 +2,9 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::slice;
 
-use crate::copy_bits::copy_bits_ptr;
-use crate::copy_bits::copy_bits_to_primitives;
-use crate::copy_bits::copy_primitives_to_bits;
+use crate::copy_bits::{copy_bits_to_primitives, copy_primitives_to_bits};
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::refrepr::BitPointer as LegacyBitPointer;
 use crate::{BitStr, BitsPrimitive};
 
 #[repr(C)]
@@ -93,34 +90,6 @@ impl<P: BitsPrimitive> PrimitiveAccessor<P> {
     #[inline]
     fn set(&mut self, value: P) {
         unsafe { copy_primitives_to_bits(slice::from_ref(&value), self.bit_ptr, P::BIT_COUNT) };
-    }
-}
-
-pub(crate) struct LegacyPrimitiveAccessor<P: BitsPrimitive, U: BitsPrimitive> {
-    bit_ptr: LegacyBitPointer<U>,
-    phantom: PhantomData<P>,
-}
-
-impl<P: BitsPrimitive, U: BitsPrimitive> LegacyPrimitiveAccessor<P, U> {
-    #[inline]
-    pub(crate) fn new(bit_ptr: LegacyBitPointer<U>) -> Self {
-        LegacyPrimitiveAccessor {
-            bit_ptr,
-            phantom: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn get(&self) -> P {
-        let mut value = P::ZERO;
-
-        let src = self.bit_ptr;
-        let dst = LegacyBitPointer::new_normalized((&mut value).into(), 0);
-        unsafe {
-            copy_bits_ptr(src, dst, P::BIT_COUNT);
-        }
-
-        value
     }
 }
 

@@ -5,8 +5,7 @@ use crate::bitvalue::BitValue;
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::byte_pointer::BytePointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::refrepr::{BitPointer as LegacyBitPointer, TypedPointer};
-use crate::{BitStr, BitsPrimitive};
+use crate::BitStr;
 
 /// Representation of a reference to a single bit in a [underlying memory].
 ///
@@ -113,26 +112,6 @@ impl BitAccessor {
             BitValue::Zero => *mut_ref &= !self.mask,
             BitValue::One => *mut_ref |= self.mask,
         }
-    }
-}
-
-pub(crate) struct LegacyBitAccessor<P: BitsPrimitive> {
-    ptr: TypedPointer<P>,
-    mask: P,
-}
-
-impl<P: BitsPrimitive> LegacyBitAccessor<P> {
-    #[inline]
-    pub(crate) fn new(bit_ptr: LegacyBitPointer<P>) -> Self {
-        LegacyBitAccessor {
-            ptr: bit_ptr.elem_ptr(),
-            mask: P::ONE << bit_ptr.offset().value(),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn get(&self) -> BitValue {
-        BitValue::from((unsafe { self.ptr.read() } & self.mask) != P::ZERO)
     }
 }
 
