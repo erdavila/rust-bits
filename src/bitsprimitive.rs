@@ -76,6 +76,7 @@ pub enum BitsPrimitiveDiscriminant {
     U128,
 }
 
+#[cfg(test)]
 impl BitsPrimitiveDiscriminant {
     #[inline]
     pub(crate) fn select<S: BitsPrimitiveSelector>(self, selector: S) -> S::Output {

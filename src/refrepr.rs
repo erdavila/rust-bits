@@ -1,16 +1,21 @@
 #[cfg(test)]
 use crate::utils::max_value_for_bit_count;
-use crate::utils::{values_count_to_bit_count, CountedBits};
-use crate::{BitsPrimitive, BitsPrimitiveDiscriminant, BitsPrimitiveSelector};
+#[cfg(test)]
+use crate::utils::values_count_to_bit_count;
+use crate::utils::CountedBits;
+use crate::BitsPrimitiveDiscriminant;
+#[cfg(test)]
+use crate::{BitsPrimitive, BitsPrimitiveSelector};
 
+#[cfg(test)]
 #[repr(C)]
 pub(crate) struct RefRepr {
     ptr: UntypedPointer,
     pub(crate) metadata: EncodedMetadata,
 }
 
+#[cfg(test)]
 impl RefRepr {
-    #[cfg(test)]
     fn encode<U: BitsPrimitive>(components: TypedRefComponents<U>) -> Self {
         fn untyped_encode(
             ptr: UntypedPointer,
@@ -261,9 +266,11 @@ mod bit_pointer {
 #[cfg(test)]
 pub(crate) use bit_pointer::*;
 
+#[cfg(test)]
 #[repr(transparent)]
 pub(crate) struct EncodedMetadata(usize);
 
+#[cfg(test)]
 impl EncodedMetadata {
     pub(crate) fn decode(&self) -> Metadata {
         let mut metadata_bits = MetadataBits::from(self.0);
@@ -322,12 +329,14 @@ impl<P: BitsPrimitive> TypedRefComponents<P> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct ComponentsBitCounts {
     offset_bit_count: usize,
     bit_count_bit_count: usize,
 }
 
+#[cfg(test)]
 impl ComponentsBitCounts {
     #[cfg(test)]
     #[inline]
@@ -347,6 +356,7 @@ impl ComponentsBitCounts {
     }
 }
 
+#[cfg(test)]
 impl From<BitsPrimitiveDiscriminant> for ComponentsBitCounts {
     #[inline]
     fn from(discr: BitsPrimitiveDiscriminant) -> Self {
@@ -379,6 +389,7 @@ impl MetadataBits {
         self.0.push_lsb(CountedBits::with_count(bits, bit_count));
     }
 
+    #[cfg(test)]
     #[inline]
     fn pop(&mut self, bit_count: usize) -> usize {
         self.0.pop_lsb(bit_count).bits

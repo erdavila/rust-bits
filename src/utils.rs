@@ -7,6 +7,7 @@ use crate::{BitValue, BitsPrimitive};
 // The number of bits required to represent a number of values.
 //
 // It is expected that `values_count` is a power of 2.
+#[cfg(test)]
 #[inline]
 pub(crate) fn values_count_to_bit_count(values_count: usize) -> usize {
     values_count.trailing_zeros() as usize

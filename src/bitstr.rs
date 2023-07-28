@@ -8,7 +8,6 @@ use std::ops::{
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::refrepr::RefRepr as LegacyRefRepr;
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
@@ -71,8 +70,8 @@ impl BitStr {
     /// Returns the number of referenced bits.
     #[inline]
     pub fn len(&self) -> usize {
-        let repr: LegacyRefRepr = unsafe { std::mem::transmute(self) };
-        repr.decode().metadata.bit_count
+        let repr: RefRepr = unsafe { std::mem::transmute(self) };
+        repr.decode().bit_count
     }
 
     /// Returns the same as `self.len() == 0`.
@@ -687,9 +686,8 @@ impl<'a> PartialOrd for NumericValue<'a> {
 mod tests {
     use std::convert::identity;
     use std::ops::Not;
-    use std::ptr::NonNull;
 
-    use crate::refrepr::RefRepr;
+    use crate::ref_encoding::RefRepr;
     use crate::BitValue::{One, Zero};
     use crate::{Bit, BitStr, BitString, BitsPrimitive, Primitive};
 
@@ -702,10 +700,9 @@ mod tests {
 
         assert_eq!(bit_str.len(), N * <u8>::BIT_COUNT);
         let components = unsafe { std::mem::transmute::<_, RefRepr>(bit_str) }.decode();
-        assert_eq!(components.ptr.ptr(), NonNull::from(&memory).cast());
-        assert_eq!(components.metadata.underlying_primitive, <u8>::DISCRIMINANT);
-        assert_eq!(components.metadata.offset, 0);
-        assert_eq!(components.metadata.bit_count, N * <u8>::BIT_COUNT);
+        assert_eq!(components.bit_ptr.byte_ptr(), memory.as_slice().into());
+        assert_eq!(components.bit_ptr.offset().value(), 0);
+        assert_eq!(components.bit_count, N * <u8>::BIT_COUNT);
     }
 
     #[test]
