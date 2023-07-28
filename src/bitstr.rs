@@ -6,8 +6,9 @@ use std::ops::{
 };
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
+use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::refrepr::{BitPointer, RefRepr as LegacyRefRepr, TypedRefComponents};
+use crate::refrepr::RefRepr as LegacyRefRepr;
 use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
@@ -36,7 +37,7 @@ impl BitStr {
     /// assert_eq!(bit_str.len(), 16);
     /// ```
     #[inline]
-    pub fn new_ref<U: BitsPrimitive>(under: &[U]) -> &Self {
+    pub fn new_ref(under: &[u8]) -> &Self {
         let repr = Self::new_repr(under);
         unsafe { std::mem::transmute(repr) }
     }
@@ -53,16 +54,16 @@ impl BitStr {
     /// assert_eq!(bit_str.len(), 16);
     /// ```
     #[inline]
-    pub fn new_mut<U: BitsPrimitive>(under: &mut [U]) -> &mut Self {
+    pub fn new_mut(under: &mut [u8]) -> &mut Self {
         let repr = Self::new_repr(under);
         unsafe { std::mem::transmute(repr) }
     }
 
     #[inline]
-    fn new_repr<U: BitsPrimitive>(under: &[U]) -> LegacyRefRepr {
-        let components = TypedRefComponents {
+    fn new_repr(under: &[u8]) -> RefRepr {
+        let components = RefComponents {
             bit_ptr: BitPointer::new_normalized(under.into(), 0),
-            bit_count: under.len() * U::BIT_COUNT,
+            bit_count: under.len() * u8::BIT_COUNT,
         };
         components.encode()
     }
@@ -973,7 +974,7 @@ mod tests {
     fn ord() {
         let value: [u8; 3] = [0xBB, 0x00, 0xBB];
         let bit_str = BitStr::new_ref(&value); // In memory: BB00BB
-        let empty = BitStr::new_mut::<u8>(&mut []);
+        let empty = BitStr::new_mut(&mut []);
         let zero = &BitStr::new_ref(&[0u8])[..1];
         let one = &BitStr::new_ref(&[1u8])[..1];
 
