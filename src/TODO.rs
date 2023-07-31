@@ -54,12 +54,12 @@ fn bit_string_construction() {
 
 fn bit_str_construction() {
     // Also for mut!
-    let primitive_slice: &[u8];
-    let bit_str: &BitStr = BitStr::new_ref(primitive_slice);
+    let bytes: &[u8];
+    let bit_str: &BitStr = BitStr::new_ref(bytes);
 
     // Also for mut!
-    let ptr: *const _;
-    let bit_str: &BitStr = unsafe { BitStr::new_ref_unchecked(ptr, bit_count) };
+    let anything: T;
+    let bit_str: &BitStr = unsafe { BitStr::new_ref_unchecked(&anything) };
 
     // Also for mut!
     let p: &Primitive<u8>; // ... and other primitive types
@@ -70,6 +70,11 @@ fn bit_str_construction() {
     let bit: &Bit;
     let bit_str: &BitStr = bit.as_bit_str();
     let bit_str: &BitStr = bit.as_ref();
+
+    // Also for mut!
+    let anything: &TypedAs<T>;
+    let bit_str: &BitStr = anything.as_bit_str();
+    let bit_str: &BitStr = anything.as_ref();
 
     // Also for mut!
     let bit_str: &BitStr = bit_string.as_bit_str();
@@ -104,6 +109,11 @@ fn accessing() {
     let bit: Option<u8> = bit_str.get_primitive::<u8>(index); // ... and other primitive types
     let bit: Option<&Primitive<u8>> = bit_str.get_primitive_ref::<u8>(index); // ... and other primitive types
     let bit: Option<&mut Primitive<u8>> = bit_str.get_primitive_mut::<u8>(index); // ... and other primitive types
+
+    let index: usize;
+    let anything: Option<T> = unsafe { bit_str.get_typed_as::<T>(index) };
+    let anything: Option<&TypedAs<T>> = unsafe { bit_str.get_typed_as_ref::<T>(index) };
+    let anything: Option<&mut TypedAs<T>> = unsafe { bit_str.get_typed_as_mut::<T>(index) };
 
     let _: u8 = bit_str.numeric_value().get_lower_bits_primitive::<u8>(); // ... and other primitive types
     assert_eq!(bit_string!("1011").numeric_value().get_lower_bits_primitive::<u8>(), 0b_0000_1011_u8); // ... and other primitive types
@@ -146,11 +156,13 @@ fn removing() {
     let removed: Option<BitValue> = bit_string.remove(index);
     let removed: Option<u8> = bit_string.remove_primitive(index); // ... and other primitive types
     let removed: Option<BitString> = bit_string.remove_n(begin..end);
+    let removed: Option<T> = unsafe { bit_string.remove_typed_as::<T>(index) };
 
     let count: usize;
     let popped: Option<BitValue> = bit_string.lsb().pop();
     let popped: Option<u8> = bit_string.lsb().pop_primitive::<u8>(); // ... and other primitive types
     let popped: Option<BitString> = bit_string.lsb().pop_n(count);
+    let popped: Option<T> = unsafe { bit_string.lsb().pop_typed_as::<T>() };
     let popped: BitString = bit_string.lsb().pop_up_to(count);
 
     let bit: BitValue;
@@ -181,12 +193,17 @@ fn adding_or_removing() {
 trait BitIterator: Iterator + DoubleEndedIterator + ExactSizeIterator + FusedIterator {
     type PrimitiveItem<P>;
     type SliceItem;
+    type TypedAsItem<T>;
 
     fn next_primitive<P: BitsPrimitive>(&mut self) -> Option<Self::PrimitiveItem<P>>;
     fn next_n(&mut self, len: usize) -> Option<SliceItem>;
+    unsafe fn next_typed_as<T>(&mut self) -> Option<Self::TypedAsItem<T>>;
+
     fn rev(self) -> impl BitIterator;
+
     fn primitives<P: BitsPrimitive>(self) -> impl BitBlockIterator<Self::PrimitiveItem<P>, Self::SliceItem>;
     fn subslices(self, len: usize) -> impl BitBlockIterator<Self::SliceItem, Self::SliceItem>;
+    unsafe fn typed_as_values<T>() -> impl BitBlockIterator<Self::TypedAsItem<T>, Self::SliceItem>;
 }
 
 struct Iter {}
@@ -196,6 +213,7 @@ impl Iterator for Iter {
 impl BitIterator for Iter {
     type PrimitiveItem<P> = P;
     type SliceItem = &BitStr;
+    type TypedAsItem<T> = T;
 }
 
 struct IterRef {}
@@ -205,6 +223,7 @@ impl Iterator for IterRef {
 impl BitIterator for IterRef {
     type PrimitiveItem<P> = &Primitive<P>;
     type SliceItem = &BitStr;
+    type TypedAsItem<T> = &TypedAs<T>;
 }
 
 struct IterMut {}
@@ -214,6 +233,7 @@ impl Iterator for IterMut {
 impl BitIterator for IterMut {
     type PrimitiveItem<P> = &mut Primitive<P>;
     type SliceItem = &mut BitStr;
+    type TypedAsItem<T> = &mut TypedAs<T>;
 }
 
 struct IntoIter {}
@@ -223,6 +243,7 @@ impl Iterator for IntoIter {
 impl BitIterator for IntoIter {
     type PrimitiveItem<P> = P;
     type SliceItem = BitString;
+    type TypedAsItem<T> = T;
 }
 
 fn iteration() {
@@ -261,7 +282,7 @@ fn primitives_iteration() {
     let _: Option<BitString> = iter.into_remainder();
 }
 
-fn subslices() {
+fn subslices_iteration() {
     let iter = bit_str.iter().subslices(3);
     let _: Option<&BitStr> = iter.next();
     let _: Option<&BitStr> = iter.into_remainder();
@@ -276,6 +297,24 @@ fn subslices() {
 
     let iter = bit_str.into_iter().subslices(3);
     let _: Option<BitString> = iter.next();
+    let _: Option<BitString> = iter.into_remainder();
+}
+
+fn typed_as_iteration() {
+    let iter = unsafe { bit_str.iter().typed_as_values::<T>() };
+    let _: Option<T> = iter.next();
+    let _: Option<&BitStr> = iter.into_remainder();
+
+    let iter = unsafe { bit_str.iter_ref().typed_as_values::<T>() };
+    let _: Option<&TypedAs<T>> = iter.next();
+    let _: Option<&BitStr> = iter.into_remainder();
+
+    let iter = unsafe { bit_str.iter_mut().typed_as_values::<T>() };
+    let _: Option<&mut TypedAs<T>> = iter.next();
+    let _: Option<&mut BitStr> = iter.into_remainder();
+
+    let iter = unsafe { bit_str.into_iter().typed_as_values::<T>() };
+    let _: Option<T> = iter.next();
     let _: Option<BitString> = iter.into_remainder();
 }
 

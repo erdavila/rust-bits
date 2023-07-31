@@ -60,11 +60,11 @@ impl Metadata {
 #[repr(transparent)]
 struct EncodedMetadata(usize);
 impl EncodedMetadata {
-    const OFFSET_BIT_COUNT: usize = 3;
+    const OFFSET_BIT_COUNT: usize = Offset::MAX_VALUE.count_ones() as usize;
     const BIT_COUNT_BIT_COUNT: usize = usize::BIT_COUNT - Self::OFFSET_BIT_COUNT;
 
     #[cfg(test)]
-    const MAX_OFFSET: usize = max_value_for_bit_count(Self::OFFSET_BIT_COUNT);
+    const MAX_OFFSET: usize = Offset::MAX_VALUE;
     const MAX_BIT_COUNT: usize = max_value_for_bit_count(Self::BIT_COUNT_BIT_COUNT);
 
     #[inline]
@@ -207,13 +207,17 @@ pub(crate) mod pointer {
 }
 
 pub(crate) mod offset {
+    use crate::BitsPrimitive;
+
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub(crate) struct Offset(u8);
 
     impl Offset {
+        pub(crate) const MAX_VALUE: usize = u8::BIT_COUNT - 1;
+
         #[inline]
         pub(crate) fn new(value: usize) -> Self {
-            Offset((value & 0b0111) as u8)
+            Offset((value % u8::BIT_COUNT) as u8)
         }
 
         #[inline]

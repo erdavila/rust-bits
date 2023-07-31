@@ -4,15 +4,6 @@ use std::{cmp, mem};
 use crate::ref_encoding::offset::Offset;
 use crate::{BitValue, BitsPrimitive};
 
-// The number of bits required to represent a number of values.
-//
-// It is expected that `values_count` is a power of 2.
-#[cfg(test)]
-#[inline]
-pub(crate) fn values_count_to_bit_count(values_count: usize) -> usize {
-    values_count.trailing_zeros() as usize
-}
-
 // The number of values that can be represented with a number of bits.
 #[inline]
 pub(crate) const fn bit_count_to_values_count(bit_count: usize) -> usize {
@@ -291,15 +282,6 @@ pub(crate) enum Either<L, R> {
 mod tests {
     use crate::ref_encoding::offset::Offset;
     use crate::utils::BitPattern;
-
-    #[test]
-    fn values_count_to_bit_count() {
-        use super::values_count_to_bit_count;
-
-        assert_eq!(values_count_to_bit_count(8), 3);
-        assert_eq!(values_count_to_bit_count(16), 4);
-        assert_eq!(values_count_to_bit_count(32), 5);
-    }
 
     #[test]
     fn bit_count_to_values_count() {
