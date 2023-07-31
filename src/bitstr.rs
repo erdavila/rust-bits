@@ -1,18 +1,15 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::ops::{
     Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
     RangeToInclusive,
 };
 
-use crate::copy_bits::copy_bits_ptr;
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
-use crate::refrepr::{
-    BitPointer, Offset, RefComponentsSelector, RefRepr, TypedPointer, TypedRefComponents,
-    UntypedRefComponents,
-};
-use crate::utils::primitive_elements_regions::PrimitiveElementsRegions;
+use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::offset::Offset;
+use crate::ref_encoding::{RefComponents, RefRepr};
+use crate::utils::underlying_bytes_regions::UnderlyingBytesRegions;
 use crate::utils::{BitPattern, CountedBits, Either};
 use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
@@ -40,7 +37,7 @@ impl BitStr {
     /// assert_eq!(bit_str.len(), 16);
     /// ```
     #[inline]
-    pub fn new_ref<U: BitsPrimitive>(under: &[U]) -> &Self {
+    pub fn new_ref(under: &[u8]) -> &Self {
         let repr = Self::new_repr(under);
         unsafe { std::mem::transmute(repr) }
     }
@@ -57,16 +54,16 @@ impl BitStr {
     /// assert_eq!(bit_str.len(), 16);
     /// ```
     #[inline]
-    pub fn new_mut<U: BitsPrimitive>(under: &mut [U]) -> &mut Self {
+    pub fn new_mut(under: &mut [u8]) -> &mut Self {
         let repr = Self::new_repr(under);
         unsafe { std::mem::transmute(repr) }
     }
 
     #[inline]
-    fn new_repr<U: BitsPrimitive>(under: &[U]) -> RefRepr {
-        let components = TypedRefComponents {
+    fn new_repr(under: &[u8]) -> RefRepr {
+        let components = RefComponents {
             bit_ptr: BitPointer::new_normalized(under.into(), 0),
-            bit_count: under.len() * U::BIT_COUNT,
+            bit_count: under.len() * u8::BIT_COUNT,
         };
         components.encode()
     }
@@ -75,7 +72,7 @@ impl BitStr {
     #[inline]
     pub fn len(&self) -> usize {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
-        repr.decode().metadata.bit_count
+        repr.decode().bit_count
     }
 
     /// Returns the same as `self.len() == 0`.
@@ -89,20 +86,14 @@ impl BitStr {
     /// `None` is returned if the index is out of bounds.
     #[inline]
     pub fn get(&self, index: usize) -> Option<BitValue> {
-        struct Selector;
-        impl OnRangeSelector for Selector {
-            type Output = BitValue;
-            #[inline]
-            fn select<U: BitsPrimitive>(
-                self,
-                range_ref_components: TypedRefComponents<U>,
-            ) -> Self::Output {
+        Self::on_range(
+            index..(index + 1),
+            self.ref_components(),
+            |range_ref_components| {
                 let accessor = BitAccessor::new(range_ref_components.bit_ptr);
                 accessor.get()
-            }
-        }
-
-        select_on_range(index..(index + 1), self.ref_components(), Selector)
+            },
+        )
     }
 
     /// Returns a reference to a bit.
@@ -148,23 +139,13 @@ impl BitStr {
 
     #[inline]
     pub fn get_primitive<P: BitsPrimitive>(&self, first_bit_index: usize) -> Option<P> {
-        struct Selector<P>(PhantomData<P>);
-        impl<P: BitsPrimitive> OnRangeSelector for Selector<P> {
-            type Output = P;
-            #[inline]
-            fn select<U: BitsPrimitive>(
-                self,
-                range_ref_components: TypedRefComponents<U>,
-            ) -> Self::Output {
-                let accessor = PrimitiveAccessor::<P, U>::new(range_ref_components.bit_ptr);
-                accessor.get()
-            }
-        }
-
-        select_on_range(
+        Self::on_range(
             first_bit_index..(first_bit_index + P::BIT_COUNT),
             self.ref_components(),
-            Selector(PhantomData),
+            |range_ref_components| {
+                let accessor = PrimitiveAccessor::new(range_ref_components.bit_ptr);
+                accessor.get()
+            },
         )
     }
 
@@ -194,18 +175,25 @@ impl BitStr {
     #[inline]
     fn get_range_ref_repr<R: RangeBounds<usize>>(&self, range: R) -> Option<RefRepr> {
         let components = self.ref_components();
-        let range = resolve_range(range, components.metadata.bit_count);
+        let range = resolve_range(range, components.bit_count);
+        Self::on_range(range, components, |range_ref_components| {
+            range_ref_components.encode()
+        })
+    }
 
-        struct Selector;
-        impl OnRangeSelector for Selector {
-            type Output = RefRepr;
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                components.encode()
-            }
-        }
+    #[inline]
+    fn on_range<F, R>(range: Range<usize>, components: RefComponents, f: F) -> Option<R>
+    where
+        F: FnOnce(RefComponents) -> R,
+    {
+        (range.start <= range.end && range.end <= components.bit_count).then(|| {
+            let range_ref_components = RefComponents {
+                bit_ptr: components.bit_ptr.add_offset(range.start),
+                bit_count: range.len(),
+            };
 
-        select_on_range(range, components, Selector)
+            f(range_ref_components)
+        })
     }
 
     #[inline]
@@ -239,104 +227,73 @@ impl BitStr {
     fn split_at_repr(&self, index: usize) -> (RefRepr, RefRepr) {
         let components = self.ref_components();
 
-        assert!(index <= components.metadata.bit_count, "invalid index");
+        assert!(index <= components.bit_count, "invalid index");
 
-        components.select({
-            struct Selector(usize);
-            impl RefComponentsSelector for Selector {
-                type Output = (RefRepr, RefRepr);
-                #[inline]
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let lsb_components = TypedRefComponents {
-                        bit_ptr: components.bit_ptr,
-                        bit_count: self.0,
-                    };
-                    let msb_components = TypedRefComponents {
-                        bit_ptr: components.bit_ptr.add_offset(self.0),
-                        bit_count: components.bit_count - self.0,
-                    };
-                    (msb_components.encode(), lsb_components.encode())
-                }
-            }
+        let lsb_components = RefComponents {
+            bit_ptr: components.bit_ptr,
+            bit_count: index,
+        };
+        let msb_components = RefComponents {
+            bit_ptr: components.bit_ptr.add_offset(index),
+            bit_count: components.bit_count - index,
+        };
 
-            Selector(index)
-        })
+        (msb_components.encode(), lsb_components.encode())
     }
 
     #[inline]
     fn only_zeros(&self) -> bool {
-        self.ref_components().select({
-            struct Selector;
-            impl RefComponentsSelector for Selector {
-                type Output = bool;
+        let components = self.ref_components();
 
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let regions = PrimitiveElementsRegions::new(
-                        components.bit_ptr.offset().value(),
-                        components.bit_count,
-                        U::BIT_COUNT,
-                    );
+        macro_rules! read_and_test {
+            ($index:expr, $offset:expr, $bit_count:expr) => {{
+                let byte = unsafe { components.bit_ptr.byte_ptr().add($index).read() };
+                let mut bits = byte >> $offset.value();
+                if $bit_count != u8::BIT_COUNT {
+                    bits &= BitPattern::<u8>::new_with_zeros()
+                        .and_ones($bit_count)
+                        .get();
+                }
+                if bits != 0 {
+                    return false;
+                }
+            }};
+        }
 
-                    let read = |index| unsafe { components.bit_ptr.elem_ptr().add(index).read() };
+        let regions =
+            UnderlyingBytesRegions::new(components.bit_ptr.offset(), components.bit_count);
 
-                    match regions {
-                        PrimitiveElementsRegions::Multiple {
-                            lsb_element,
-                            full_elements,
-                            msb_element,
-                        } => {
-                            if let Some(lsb) = lsb_element {
-                                let mut bits = read(0) >> lsb.bit_offset;
-                                bits &= BitPattern::new_with_zeros().and_ones(lsb.bit_count).get();
-                                if bits != U::ZERO {
-                                    return false;
-                                }
-                            }
+        match regions {
+            UnderlyingBytesRegions::Multiple {
+                lsb_byte,
+                full_bytes,
+                msb_byte,
+            } => {
+                if let Some(lsb) = lsb_byte {
+                    read_and_test!(0, lsb.bit_offset, lsb.bit_count);
+                }
 
-                            if let Some(full) = full_elements {
-                                for index in full.indexes {
-                                    let bits = read(index);
-                                    if bits != U::ZERO {
-                                        return false;
-                                    }
-                                }
-                            }
-
-                            if let Some(msb) = msb_element {
-                                let mut bits = read(msb.index);
-                                bits &= BitPattern::new_with_zeros().and_ones(msb.bit_count).get();
-                                if bits != U::ZERO {
-                                    return false;
-                                }
-                            }
-                        }
-                        PrimitiveElementsRegions::Single {
-                            bit_offset,
-                            bit_count,
-                        } => {
-                            let mut bits = read(0) >> bit_offset;
-                            bits &= BitPattern::new_with_zeros().and_ones(bit_count).get();
-                            if bits != U::ZERO {
-                                return false;
-                            }
-                        }
+                if let Some(full) = full_bytes {
+                    for index in full.indexes {
+                        read_and_test!(index, Offset::new(0), u8::BIT_COUNT);
                     }
+                }
 
-                    true
+                if let Some(msb) = msb_byte {
+                    read_and_test!(msb.index, Offset::new(0), msb.bit_count);
                 }
             }
-            Selector
-        })
+            UnderlyingBytesRegions::Single {
+                bit_offset,
+                bit_count,
+            } => read_and_test!(0, bit_offset, bit_count),
+        }
+
+        true
     }
 
     #[inline]
-    pub(crate) fn ref_components(&self) -> UntypedRefComponents {
+    pub(crate) fn ref_components(&self) -> RefComponents {
         let repr: RefRepr = unsafe { std::mem::transmute(self) };
         repr.decode()
     }
@@ -397,40 +354,6 @@ fn resolve_range<R: RangeBounds<usize>>(range: R, len: usize) -> Range<usize> {
     };
 
     start..end
-}
-
-#[inline]
-fn select_on_range<S: OnRangeSelector>(
-    range: Range<usize>,
-    components: UntypedRefComponents,
-    selector: S,
-) -> Option<S::Output> {
-    (range.start <= range.end && range.end <= components.metadata.bit_count).then(|| {
-        struct InnerSelector<S> {
-            range: Range<usize>,
-            selector: S,
-        }
-        impl<S: OnRangeSelector> RefComponentsSelector for InnerSelector<S> {
-            type Output = S::Output;
-
-            #[inline]
-            fn select<U: BitsPrimitive>(self, components: TypedRefComponents<U>) -> Self::Output {
-                let components = TypedRefComponents {
-                    bit_ptr: components.bit_ptr.add_offset(self.range.start),
-                    bit_count: self.range.len(),
-                };
-                self.selector.select(components)
-            }
-        }
-
-        components.select(InnerSelector { range, selector })
-    })
-}
-
-trait OnRangeSelector {
-    type Output;
-
-    fn select<U: BitsPrimitive>(self, range_ref_components: TypedRefComponents<U>) -> Self::Output;
 }
 
 macro_rules! impl_index {
@@ -717,29 +640,11 @@ pub struct NumericValue<'a>(&'a BitStr);
 impl<'a> NumericValue<'a> {
     #[inline]
     pub fn get_lower_bits_primitive<P: BitsPrimitive>(&self) -> P {
-        self.0.ref_components().select({
-            struct Selector<P>(PhantomData<P>);
-            impl<P: BitsPrimitive> RefComponentsSelector for Selector<P> {
-                type Output = P;
+        let components = self.0.ref_components();
 
-                #[inline]
-                fn select<U: BitsPrimitive>(
-                    self,
-                    components: TypedRefComponents<U>,
-                ) -> Self::Output {
-                    let mut result = P::ZERO;
-
-                    let src = components.bit_ptr;
-                    let dst = BitPointer::new(TypedPointer::from(&mut result), Offset::new(0));
-                    let bit_count = cmp::min(P::BIT_COUNT, components.bit_count);
-                    unsafe { copy_bits_ptr(src, dst, bit_count) };
-
-                    result
-                }
-            }
-
-            Selector(PhantomData)
-        })
+        let accessor = PrimitiveAccessor::new(components.bit_ptr);
+        let bit_count = cmp::min(P::BIT_COUNT, components.bit_count);
+        accessor.get_lower_bits(bit_count)
     }
 }
 
@@ -779,40 +684,23 @@ impl<'a> PartialOrd for NumericValue<'a> {
 mod tests {
     use std::convert::identity;
     use std::ops::Not;
-    use std::ptr::NonNull;
 
-    use crate::refrepr::RefRepr;
+    use crate::ref_encoding::RefRepr;
     use crate::BitValue::{One, Zero};
     use crate::{Bit, BitStr, BitString, BitsPrimitive, Primitive};
 
     #[test]
     fn new_ref() {
         const N: usize = 3;
+        let memory: [u8; N] = [0u8, 0u8, 0u8];
 
-        macro_rules! assert_new_ref_with_type {
-            ($type:ty) => {
-                let memory: [$type; N] = [<$type>::ZERO, <$type>::ZERO, <$type>::ZERO];
+        let bit_str: &BitStr = BitStr::new_ref(&memory);
 
-                let bit_str: &BitStr = BitStr::new_ref(&memory);
-
-                assert_eq!(bit_str.len(), N * <$type>::BIT_COUNT);
-                let components = unsafe { std::mem::transmute::<_, RefRepr>(bit_str) }.decode();
-                assert_eq!(components.ptr.ptr(), NonNull::from(&memory).cast());
-                assert_eq!(
-                    components.metadata.underlying_primitive,
-                    <$type>::DISCRIMINANT
-                );
-                assert_eq!(components.metadata.offset, 0);
-                assert_eq!(components.metadata.bit_count, N * <$type>::BIT_COUNT);
-            };
-        }
-
-        assert_new_ref_with_type!(usize);
-        assert_new_ref_with_type!(u8);
-        assert_new_ref_with_type!(u16);
-        assert_new_ref_with_type!(u32);
-        assert_new_ref_with_type!(u64);
-        assert_new_ref_with_type!(u128);
+        assert_eq!(bit_str.len(), N * <u8>::BIT_COUNT);
+        let components = unsafe { std::mem::transmute::<_, RefRepr>(bit_str) }.decode();
+        assert_eq!(components.bit_ptr.byte_ptr(), memory.as_slice().into());
+        assert_eq!(components.bit_ptr.offset().value(), 0);
+        assert_eq!(components.bit_count, N * <u8>::BIT_COUNT);
     }
 
     #[test]
@@ -904,7 +792,7 @@ mod tests {
 
     #[test]
     fn get_range_ref() {
-        let memory: [u16; 2] = [0b01011111_11101001, 0b10010111_11111010]; // In memory: 10010111_11111010__01011111_11101001
+        let memory: [u8; 4] = [0b11101001, 0b01011111, 0b11111010, 0b10010111]; // In memory: 10010111_11111010__01011111_11101001
         let bit_str = BitStr::new_ref(memory.as_ref());
 
         let range1: Option<&BitStr> = bit_str.get_range_ref(0..4);
@@ -1026,7 +914,7 @@ mod tests {
 
     #[test]
     fn eq() {
-        let memory: [u16; 3] = [0xCDEF, 0xEFAB, 0xABCD]; // In memory: ABCDEFABCDEF
+        let memory: [u8; 6] = [0xEF, 0xCD, 0xAB, 0xEF, 0xCD, 0xAB]; // In memory: ABCDEFABCDEF
         let bit_str = BitStr::new_ref(&memory);
         let bit_str_1 = &bit_str[8..20]; // In memory: BCD
         let bit_str_2 = &bit_str[32..44]; // In memory: BCD
@@ -1081,13 +969,12 @@ mod tests {
     fn ord() {
         let value: [u8; 3] = [0xBB, 0x00, 0xBB];
         let bit_str = BitStr::new_ref(&value); // In memory: BB00BB
-        let empty = BitStr::new_mut::<u8>(&mut []);
+        let empty = BitStr::new_mut(&mut []);
         let zero = &BitStr::new_ref(&[0u8])[..1];
         let one = &BitStr::new_ref(&[1u8])[..1];
 
         assert!(!(bit_str < bit_str));
         assert!(!(bit_str < BitStr::new_ref(&[0xBBu8, 0x00u8, 0xBBu8]))); // In memory: BB00BB (equal)
-        assert!(!(bit_str < (&BitStr::new_ref(&[0xBB00u16, 0xBB00u16])[8..]))); // In memory: BB00BB (equal, but u16)
         assert!(bit_str < BitStr::new_ref(&[0xCCu8, 0x00u8, 0xBBu8])); // In memory: BB00CC (MSByte is equal but LSByte is larger)
         assert!(bit_str < BitStr::new_ref(&[0xAAu8, 0x00u8, 0xCCu8])); // In memory: CC00AA (MSByte is larger but LSByte is smaller)
         assert!(empty < zero); // "" < "0"
@@ -1102,30 +989,37 @@ mod tests {
         fn cmp() {
             let bit_str_1 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8])[0..12]; // In memory: 0110_10010011
             let bit_str_2 = BitStr::new_ref(&[0b10010011u8, 0b0110u8]); // In memory: 00000110_10010011
-            let bit_str_3 = BitStr::new_ref(&[0b00000110_10010011u16]); // In memory: 00000110_10010011
-            let bit_str_4 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
-            let bit_str_5 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
-            let bit_str_6 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
-            let bit_str_ne = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+            let bit_str_3 = BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8]); // In memory: 00000000_00000110_10010011
+            let bit_str_4 = &BitStr::new_ref(&[0b10010011u8, 0b0110u8, 0b0u8])[0..20]; // In memory: 0000_00000110_10010011
+            let bit_str_5 = &BitStr::new_ref(&[0b11000000u8, 0b10100100u8, 0b1u8])[6..22]; // In memory: 00000110_10010011
+            let bit_str_ne_1 = BitStr::new_ref(&[0b10010011u8, 0b01000110u8]); // In memory: 01000110_10010011
+            let bit_str_ne_2 = BitStr::new_ref(&[0b00010011u8, 0b00000110u8, 0b1u8]); // In memory: 00000001_00000110_10010011
+            let bit_str_ne_3 =
+                &BitStr::new_ref(&[0b00010011u8, 0b00000110u8, 0b00000000u8, 0b1u8])[..31]; // In memory: 00000001_00000000_00000110_10010011
+            let bit_str_ne_4 = &BitStr::new_ref(&[0b10010011u8, 0b01000110u8])[..15]; // In memory: 1000110_10010011
 
             assert!(bit_str_1.numeric_value() == bit_str_1.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_2.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_3.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_4.numeric_value());
             assert!(bit_str_1.numeric_value() == bit_str_5.numeric_value());
-            assert!(bit_str_1.numeric_value() == bit_str_6.numeric_value());
-            assert!(bit_str_1.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_2.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_3.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_4.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_5.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_6.numeric_value() < bit_str_ne.numeric_value());
-            assert!(bit_str_ne.numeric_value() > bit_str_1.numeric_value());
+
+            assert!(bit_str_1.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_2.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_3.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_4.numeric_value() < bit_str_ne_1.numeric_value());
+            assert!(bit_str_5.numeric_value() < bit_str_ne_1.numeric_value());
+
+            assert!(bit_str_1.numeric_value() < bit_str_ne_2.numeric_value());
+            assert!(bit_str_1.numeric_value() < bit_str_ne_3.numeric_value());
+            assert!(bit_str_1.numeric_value() < bit_str_ne_4.numeric_value());
+
+            assert!(bit_str_ne_1.numeric_value() > bit_str_1.numeric_value());
         }
 
         #[test]
         fn get_lower_bits_primitive() {
-            let bit_str = &BitStr::new_ref(&[0b1100_1001_0011_10u16])[2..]; // In memory: 001100_10010011
+            let bit_str = &BitStr::new_ref(&[0b010011_10u8, 0b001100_10u8])[2..]; // In memory: 001100_10010011
 
             assert_eq!(
                 bit_str.numeric_value().get_lower_bits_primitive::<u8>(),

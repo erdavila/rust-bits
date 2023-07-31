@@ -23,7 +23,7 @@ mod bitvalue;
 pub mod copy_bits;
 pub mod iter;
 mod primitive;
-mod refrepr;
+mod ref_encoding;
 mod utils;
 
 pub use bit::*;

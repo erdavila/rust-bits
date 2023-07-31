@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn display() {
-        let memory: [u16; 1] = [0b00101110_00101011];
+        let memory: [u8; 2] = [0b00101011, 0b00101110];
         let bit_str = &BitStr::new_ref(memory.as_ref())[1..15];
 
         assert_eq!(format!("{}", bit_str), "01011100010101");
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn binary() {
-        let memory: [u16; 1] = [0b00101110_00101011];
+        let memory: [u8; 2] = [0b00101011, 0b00101110];
         let bit_str = &BitStr::new_ref(memory.as_ref())[1..15];
 
         assert_eq!(format!("{:b}", bit_str), "01011100010101");
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn debug() {
-        let memory: [u16; 1] = [0b00101110_00101011];
+        let memory: [u8; 2] = [0b00101011, 0b00101110];
         let bit_str = &BitStr::new_ref(memory.as_ref())[1..15];
 
         assert_eq!(format!("{:?}", bit_str), "\"01011100010101\"");
