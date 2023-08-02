@@ -5,7 +5,7 @@ use std::ops::{
     RangeToInclusive,
 };
 
-use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter, ReverseIter};
+use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::{RefComponents, RefRepr};
@@ -304,33 +304,29 @@ impl BitStr {
             return false;
         };
 
-        struct Consumer<'a> {
-            other_iter: std::slice::Iter<'a, BitValue>,
-        }
-        impl<'a> ConsumeIterator<'a> for Consumer<'a> {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, self_bits: P) -> Result<(), ()> {
+        let self_iter = self.iter();
+        let mut other_iter = other.iter();
+
+        let result = consume_iterator(
+            self_iter,
+            &mut other_iter,
+            |other_iter, self_byte| {
                 let mut other_bits = CountedBits::new();
 
-                while other_bits.count < P::BIT_COUNT {
-                    other_bits.push_msb_value(*self.other_iter.next().unwrap());
+                while other_bits.count < u8::BIT_COUNT {
+                    other_bits.push_msb_value(*other_iter.next().unwrap());
                 }
 
-                (self_bits == other_bits.bits).then_some(()).ok_or(())
-            }
+                let other_byte = other_bits.bits;
+                (self_byte == other_byte).then_some(()).ok_or(())
+            },
+            |other_iter, self_bit| {
+                let other_bit = other_iter.next().unwrap();
+                (self_bit == *other_bit).then_some(()).ok_or(())
+            },
+        );
 
-            #[inline]
-            fn consume_remainder_bit(&mut self, self_value: BitValue) -> Result<(), ()> {
-                let other_value = self.other_iter.next().unwrap();
-                (self_value == *other_value).then_some(()).ok_or(())
-            }
-        }
-
-        let self_iter = self.iter();
-        let other_iter = other.iter();
-
-        let mut consumer = Consumer { other_iter };
-        consumer.consume_iterator(self_iter).is_ok()
+        result.is_ok()
     }
 
     #[inline]
@@ -399,86 +395,64 @@ impl<'a> IntoIterator for &'a BitStr {
     }
 }
 
-trait ConsumeIterator<'a> {
-    fn consume_primitive<P: BitsPrimitive + 'a>(&mut self, value: P) -> Result<(), ()>;
-    fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()>;
-
-    fn consume_iterator(&mut self, mut iter: Iter) -> Result<(), ()> {
-        macro_rules! consume {
-            ($stmt:tt, $type:ty) => {
-                $stmt let Some(value) = iter.next_primitive::<$type>() {
-                    self.consume_primitive(value)?;
-                }
-            };
-        }
-
-        consume!(while, u128);
-        consume!(if, u64);
-        consume!(if, u32);
-        consume!(if, u16);
-        consume!(if, u8);
-
-        for value in iter {
-            self.consume_remainder_bit(value)?;
-        }
-
-        Ok(())
+fn consume_iterator<'a, I, State, FByte, FBit, Error>(
+    mut iter: I,
+    state: &mut State,
+    mut consume_byte: FByte,
+    mut consume_bit: FBit,
+) -> Result<(), Error>
+where
+    I: BitIterator<'a>,
+    FByte: FnMut(&mut State, I::PrimitiveItem<u8>) -> Result<(), Error>,
+    FBit: FnMut(&mut State, I::Item) -> Result<(), Error>,
+{
+    while let Some(byte) = iter.next_primitive::<u8>() {
+        consume_byte(state, byte)?;
     }
+
+    for bit in iter {
+        consume_bit(state, bit)?;
+    }
+
+    Ok(())
 }
 
-trait ConsumeIteratorPair<'a, I: BitIterator<'a>> {
-    type Error;
+fn consume_iterator_pair<'left, 'right, ILeft, IRight, State, FByte, FBit, FIter, Error>(
+    mut left_iter: ILeft,
+    mut right_iter: IRight,
+    state: &mut State,
+    mut consume_byte_pair: FByte,
+    mut consume_bit_pair: FBit,
+    consume_non_depleted_iterator: FIter,
+) -> Result<(), Error>
+where
+    ILeft: BitIterator<'left>,
+    IRight: BitIterator<'right>,
+    FByte:
+        FnMut(&mut State, ILeft::PrimitiveItem<u8>, IRight::PrimitiveItem<u8>) -> Result<(), Error>,
+    FBit: FnMut(&mut State, ILeft::Item, IRight::Item) -> Result<(), Error>,
+    FIter: FnOnce(&mut State, Either<ILeft, IRight>) -> Result<(), Error>,
+{
+    while left_iter.len() >= u8::BIT_COUNT && right_iter.len() >= u8::BIT_COUNT {
+        let (Some(left_byte), Some(right_byte)) = (left_iter.next_primitive::<u8>(), right_iter.next_primitive::<u8>()) else {
+            unreachable!();
+        };
+        consume_byte_pair(state, left_byte, right_byte)?;
+    }
 
-    fn consume_primitive_pair<P: BitsPrimitive>(
-        &mut self,
-        left: I::PrimitiveItem<P>,
-        right: I::PrimitiveItem<P>,
-    ) -> Result<(), Self::Error>;
+    while left_iter.len() > 0 && right_iter.len() > 0 {
+        let (Some(left_bit), Some(right_bit)) = (left_iter.next(), right_iter.next()) else {
+            unreachable!();
+        };
+        consume_bit_pair(state, left_bit, right_bit)?;
+    }
 
-    fn consume_remainder_bit_pair(
-        &mut self,
-        left: I::Item,
-        right: I::Item,
-    ) -> Result<(), Self::Error>;
-
-    fn consume_non_depleted_iterator(&mut self, iter: Either<I, I>) -> Result<(), Self::Error>;
-
-    fn consume_iterator_pair(
-        &mut self,
-        mut left_iter: I,
-        mut right_iter: I,
-    ) -> Result<(), Self::Error> {
-        macro_rules! consume {
-            ($stmt:tt, $type:ty) => {
-                $stmt left_iter.len() >= <$type>::BIT_COUNT && right_iter.len() >= <$type>::BIT_COUNT {
-                    let (Some(left_value), Some(right_value)) = (left_iter.next_primitive::<$type>(), right_iter.next_primitive::<$type>()) else {
-                        unreachable!();
-                    };
-                    self.consume_primitive_pair(left_value, right_value)?;
-                }
-            };
-        }
-
-        consume!(while, u128);
-        consume!(if, u64);
-        consume!(if, u32);
-        consume!(if, u16);
-        consume!(if, u8);
-
-        while left_iter.len() > 0 && right_iter.len() > 0 {
-            let (Some(left_bit), Some(right_bit)) = (left_iter.next(), right_iter.next()) else {
-                unreachable!();
-            };
-            self.consume_remainder_bit_pair(left_bit, right_bit)?;
-        }
-
-        if left_iter.len() > 0 {
-            self.consume_non_depleted_iterator(Either::Left(left_iter))
-        } else if right_iter.len() > 0 {
-            self.consume_non_depleted_iterator(Either::Right(right_iter))
-        } else {
-            Ok(())
-        }
+    if left_iter.len() > 0 {
+        consume_non_depleted_iterator(state, Either::Left(left_iter))
+    } else if right_iter.len() > 0 {
+        consume_non_depleted_iterator(state, Either::Right(right_iter))
+    } else {
+        Ok(())
     }
 }
 
@@ -526,57 +500,32 @@ impl PartialEq<&BitStr> for Vec<BitValue> {
 
 impl Ord for BitStr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        struct Consumer;
-        impl Consumer {
-            #[inline]
-            fn cmp<T: Ord>(left: T, right: T) -> Result<(), Ordering> {
-                let cmp = left.cmp(&right);
-                if cmp != Ordering::Equal {
-                    Err(cmp)
-                } else {
-                    Ok(())
-                }
-            }
-        }
-        impl<'a> ConsumeIteratorPair<'a, ReverseIter<'a, Iter<'a>>> for Consumer {
-            type Error = Ordering;
-
-            #[inline]
-            fn consume_primitive_pair<P: BitsPrimitive>(
-                &mut self,
-                left: P,
-                right: P,
-            ) -> Result<(), Ordering> {
-                Self::cmp(left, right)
-            }
-
-            #[inline]
-            fn consume_remainder_bit_pair(
-                &mut self,
-                left: BitValue,
-                right: BitValue,
-            ) -> Result<(), Ordering> {
-                Self::cmp(left, right)
-            }
-
-            #[inline]
-            fn consume_non_depleted_iterator(
-                &mut self,
-                iter: Either<ReverseIter<'a, Iter<'a>>, ReverseIter<'a, Iter<'a>>>,
-            ) -> Result<(), Ordering> {
-                match iter {
-                    Either::Left(_) => Err(Ordering::Greater),
-                    Either::Right(_) => Err(Ordering::Less),
-                }
-            }
-        }
-
         let left_iter = self.iter().reverse();
         let right_iter = other.iter().reverse();
-        return match Consumer.consume_iterator_pair(left_iter, right_iter) {
-            Ok(()) => Ordering::Equal,
-            Err(ord) => ord,
-        };
+
+        #[inline]
+        fn cmp<T: Ord>(left: T, right: T) -> Result<(), Ordering> {
+            let cmp = left.cmp(&right);
+            if cmp != Ordering::Equal {
+                Err(cmp)
+            } else {
+                Ok(())
+            }
+        }
+
+        let result = consume_iterator_pair(
+            left_iter,
+            right_iter,
+            &mut (),
+            |_, left_byte, right_byte| cmp(left_byte, right_byte),
+            |_, left_bit, right_bit| cmp(left_bit, right_bit),
+            |_, iter| match iter {
+                Either::Left(_) => Err(Ordering::Greater),
+                Either::Right(_) => Err(Ordering::Less),
+            },
+        );
+
+        result.err().unwrap_or(Ordering::Equal)
     }
 }
 
@@ -603,25 +552,19 @@ impl PartialOrd<&BitStr> for &mut BitStr {
 
 impl Hash for BitStr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        struct Consumer<'a, H> {
-            state: &'a mut H,
-        }
-        impl<'a, H: std::hash::Hasher> ConsumeIterator<'a> for Consumer<'a, H> {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
-                value.hash(self.state);
+        let result: Result<_, ()> = consume_iterator(
+            self.iter(),
+            state,
+            |state, byte| {
+                byte.hash(state);
                 Ok(())
-            }
-
-            #[inline]
-            fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()> {
-                value.hash(self.state);
+            },
+            |state, bit| {
+                bit.hash(state);
                 Ok(())
-            }
-        }
-
-        let mut consumer = Consumer { state };
-        consumer.consume_iterator(self.iter()).unwrap();
+            },
+        );
+        result.unwrap();
     }
 }
 

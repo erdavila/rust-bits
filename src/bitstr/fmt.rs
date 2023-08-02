@@ -1,6 +1,7 @@
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex, Write};
 
-use crate::bitstr::ConsumeIterator;
+use crate::bitstr::consume_iterator;
+use crate::utils::CountedBits;
 use crate::{BitStr, BitValue, BitsPrimitive};
 
 impl BitStr {
@@ -14,64 +15,53 @@ impl BitStr {
 
         let (remainder_bin_bits, hex_bits) = self.split_at(hex_bits_count);
 
+        let format_hex = |value, width| {
+            if upper {
+                format!("{:0width$X}", value, width = width)
+            } else {
+                format!("{:0width$x}", value, width = width)
+            }
+        };
+
+        struct State {
+            hex_digits: String,
+            non_primitive_bits: CountedBits<u8>,
+        }
+        let mut state = State {
+            hex_digits: String::with_capacity(hex_digits_count),
+            non_primitive_bits: CountedBits::new(),
+        };
+        let result: Result<_, ()> = consume_iterator(
+            hex_bits.iter(),
+            &mut state,
+            |state, byte| {
+                let str = format_hex(byte, u8::BIT_COUNT / BITS_PER_HEX_DIGIT);
+                state.hex_digits.insert_str(0, &str);
+                Ok(())
+            },
+            |state, bit| {
+                state.non_primitive_bits.push_msb_value(bit);
+
+                if state.non_primitive_bits.count == BITS_PER_HEX_DIGIT {
+                    let str = format_hex(state.non_primitive_bits.bits, 1);
+                    state.hex_digits.insert_str(0, &str);
+                }
+
+                Ok(())
+            },
+        );
+        result.unwrap();
+
         if remainder_bin_bits_count > 0 {
             Binary::fmt(remainder_bin_bits, f)?;
             f.write_char(':')?;
         }
 
-        struct Consumer {
-            hex_digits: String,
-            non_primitive_bits: usize,
-            non_primitive_bit_count: usize,
-            upper: bool,
-        }
-        impl Consumer {
-            #[inline]
-            fn format_hex<P: BitsPrimitive>(&self, value: P, width: usize) -> String {
-                if self.upper {
-                    format!("{:0width$X}", value, width = width)
-                } else {
-                    format!("{:0width$x}", value, width = width)
-                }
-            }
-        }
-        impl ConsumeIterator<'_> for Consumer {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
-                let str = self.format_hex(value, P::BIT_COUNT / BITS_PER_HEX_DIGIT);
-                self.hex_digits.insert_str(0, &str);
-                Ok(())
-            }
-
-            #[inline]
-            fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()> {
-                if value == BitValue::One {
-                    self.non_primitive_bits |= 1 << self.non_primitive_bit_count;
-                }
-                self.non_primitive_bit_count += 1;
-
-                if self.non_primitive_bit_count == BITS_PER_HEX_DIGIT {
-                    let str = self.format_hex(self.non_primitive_bits, 1);
-                    self.hex_digits.insert_str(0, &str);
-                }
-
-                Ok(())
-            }
-        }
-
-        let mut consumer = Consumer {
-            hex_digits: String::with_capacity(hex_digits_count),
-            non_primitive_bits: 0,
-            non_primitive_bit_count: 0,
-            upper,
-        };
-        consumer.consume_iterator(hex_bits.iter()).unwrap();
-
-        if f.alternate() && !consumer.hex_digits.is_empty() {
+        if f.alternate() && !state.hex_digits.is_empty() {
             f.write_str("0x")?;
         }
 
-        f.write_str(&consumer.hex_digits)
+        f.write_str(&state.hex_digits)
     }
 }
 
@@ -85,39 +75,33 @@ impl Display for BitStr {
 impl Binary for BitStr {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        struct Consumer {
-            bits: String,
-        }
-        impl ConsumeIterator<'_> for Consumer {
-            #[inline]
-            fn consume_primitive<P: BitsPrimitive>(&mut self, value: P) -> Result<(), ()> {
-                let s = format!("{:0width$b}", value, width = P::BIT_COUNT);
-                self.bits.insert_str(0, &s);
-                Ok(())
-            }
+        let iter = self.iter();
+        let mut digits = String::with_capacity(iter.len());
 
-            #[inline]
-            fn consume_remainder_bit(&mut self, value: BitValue) -> Result<(), ()> {
-                let s = match value {
+        let result: Result<_, ()> = consume_iterator(
+            iter,
+            &mut digits,
+            |digits, byte| {
+                let s = format!("{:0width$b}", byte, width = u8::BIT_COUNT);
+                digits.insert_str(0, &s);
+                Ok(())
+            },
+            |digits, bit| {
+                let s = match bit {
                     BitValue::Zero => "0",
                     BitValue::One => "1",
                 };
-                self.bits.insert_str(0, s);
+                digits.insert_str(0, s);
                 Ok(())
-            }
-        }
+            },
+        );
+        result.unwrap();
 
-        let iter = self.iter();
-        let mut consumer = Consumer {
-            bits: String::with_capacity(iter.len()),
-        };
-        consumer.consume_iterator(iter).unwrap();
-
-        if f.alternate() && !consumer.bits.is_empty() {
+        if f.alternate() && !digits.is_empty() {
             f.write_str("0b")?;
         }
 
-        f.write_str(&consumer.bits)
+        f.write_str(&digits)
     }
 }
 
