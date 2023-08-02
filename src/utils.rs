@@ -68,6 +68,14 @@ impl<P: BitsPrimitive> CountedBits<P> {
         }
     }
 
+    pub(crate) fn pop_lsb_value(&mut self) -> Option<BitValue> {
+        (self.count > 0).then(|| {
+            let value = BitValue::from(self.bits & P::ONE != P::ZERO);
+            self.drop_lsb(1);
+            value
+        })
+    }
+
     pub(crate) fn push_lsb(&mut self, bits: Self) {
         self.bits <<= bits.count;
         self.bits |= bits.bits;
@@ -98,10 +106,6 @@ impl<P: BitsPrimitive> CountedBits<P> {
 
     pub(crate) fn is_full(&self) -> bool {
         self.room() == 0
-    }
-
-    pub(crate) fn clear(&mut self) {
-        *self = Self::new();
     }
 
     pub(crate) fn clear_uncounted_bits(&mut self) {

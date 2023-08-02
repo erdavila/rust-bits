@@ -1,8 +1,9 @@
 use crate::bitsprimitive::BitsPrimitive;
 use crate::bitstr::BitStr;
-use crate::copy_bits::{copy_bits, copy_primitives_to_bits, Destination};
+use crate::copy_bits::{
+    bit_values_source, copy_bits, copy_bits_loop, copy_primitives_to_bits, PrimitivesDestination,
+};
 use crate::ref_encoding::bit_pointer::BitPointer;
-use crate::utils::CountedBits;
 use crate::{BitString, BitValue};
 
 pub trait BitSource {
@@ -56,15 +57,9 @@ impl BitSource for &[BitValue] {
 
     #[inline]
     unsafe fn copy_bits_to(&self, dst: BitPointer) {
-        let mut destination = Destination::bits(dst);
-        for bit in self.iter().copied() {
-            let bit = match bit {
-                BitValue::Zero => 0,
-                BitValue::One => 1,
-            };
-            destination.write(CountedBits::with_count(bit, 1));
-        }
-        destination.write_remainder();
+        let source = bit_values_source(self.iter().copied());
+        let destination = PrimitivesDestination::bits(dst);
+        copy_bits_loop(source, destination);
     }
 }
 

@@ -2,6 +2,7 @@ use std::borrow::{Borrow, BorrowMut};
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::hash::Hash;
 use std::iter::FusedIterator;
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::slice;
@@ -9,7 +10,9 @@ use std::str::FromStr;
 
 use linear_deque::LinearDeque;
 
-use crate::copy_bits::{copy_bits, copy_bits_to_primitives};
+use crate::copy_bits::{
+    bit_values_source, copy_bits, copy_bits_loop, copy_bits_to_primitives, Destination,
+};
 use crate::iter::BitIterator;
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::offset::Offset;
@@ -151,29 +154,13 @@ impl<S: BitSource> From<S> for BitString {
 impl FromIterator<BitValue> for BitString {
     #[inline]
     fn from_iter<T: IntoIterator<Item = BitValue>>(iter: T) -> Self {
-        let mut buffer = LinearDeque::new();
-        let mut primitive_bits = CountedBits::new();
+        let mut bit_string = BitString::new();
 
-        for bit in iter.into_iter() {
-            primitive_bits.push_msb_value(bit);
-            if primitive_bits.is_full() {
-                buffer.push_back(primitive_bits.bits);
-                primitive_bits.clear();
-            }
-        }
+        let src = bit_values_source(iter);
+        let dst = PushDestination::new(bit_string.msb());
+        copy_bits_loop(src, dst);
 
-        let mut bit_count = buffer.len() * u8::BIT_COUNT;
-
-        if primitive_bits.count > 0 {
-            bit_count += primitive_bits.count;
-            buffer.push_back(primitive_bits.bits);
-        }
-
-        BitString {
-            buffer,
-            offset: Offset::new(0),
-            bit_count,
-        }
+        bit_string
     }
 }
 
@@ -456,6 +443,39 @@ impl BitStringParseError {
     #[inline]
     pub fn index(&self) -> usize {
         self.0
+    }
+}
+
+struct PushDestination<'a, E: BitStringEnd<'a>> {
+    end: E,
+    buffer: CountedBits<u8>,
+    phantom: PhantomData<&'a ()>,
+}
+impl<'a, E: BitStringEnd<'a>> PushDestination<'a, E> {
+    #[inline]
+    fn new(end: E) -> Self {
+        PushDestination {
+            end,
+            buffer: CountedBits::new(),
+            phantom: PhantomData,
+        }
+    }
+}
+impl<'a, E: BitStringEnd<'a>> Destination for PushDestination<'a, E> {
+    fn write(&mut self, mut bits: CountedBits<u8>) {
+        let popped = bits.pop_lsb(self.buffer.room());
+        self.buffer.push_msb(popped);
+
+        if self.buffer.is_full() {
+            self.end.push(self.buffer.bits);
+            self.buffer = bits;
+        }
+    }
+
+    fn write_remainder(mut self) {
+        while let Some(value) = self.buffer.pop_lsb_value() {
+            self.end.push(value);
+        }
     }
 }
 
