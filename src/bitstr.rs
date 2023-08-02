@@ -7,10 +7,8 @@ use std::ops::{
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::ref_encoding::bit_pointer::BitPointer;
-use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::underlying_bytes_regions::UnderlyingBytesRegions;
-use crate::utils::{BitPattern, CountedBits, Either};
+use crate::utils::{CountedBits, Either};
 use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
 
 mod fmt;
@@ -243,53 +241,14 @@ impl BitStr {
 
     #[inline]
     fn only_zeros(&self) -> bool {
-        let components = self.ref_components();
+        let result = consume_iterator(
+            self.iter(),
+            &mut (),
+            |_, byte| (byte == 0).then_some(()).ok_or(()),
+            |_, bit| (bit == BitValue::Zero).then_some(()).ok_or(()),
+        );
 
-        macro_rules! read_and_test {
-            ($index:expr, $offset:expr, $bit_count:expr) => {{
-                let byte = unsafe { components.bit_ptr.byte_ptr().add($index).read() };
-                let mut bits = byte >> $offset.value();
-                if $bit_count != u8::BIT_COUNT {
-                    bits &= BitPattern::<u8>::new_with_zeros()
-                        .and_ones($bit_count)
-                        .get();
-                }
-                if bits != 0 {
-                    return false;
-                }
-            }};
-        }
-
-        let regions =
-            UnderlyingBytesRegions::new(components.bit_ptr.offset(), components.bit_count);
-
-        match regions {
-            UnderlyingBytesRegions::Multiple {
-                lsb_byte,
-                full_bytes,
-                msb_byte,
-            } => {
-                if let Some(lsb) = lsb_byte {
-                    read_and_test!(0, lsb.bit_offset, lsb.bit_count);
-                }
-
-                if let Some(full) = full_bytes {
-                    for index in full.indexes {
-                        read_and_test!(index, Offset::new(0), u8::BIT_COUNT);
-                    }
-                }
-
-                if let Some(msb) = msb_byte {
-                    read_and_test!(msb.index, Offset::new(0), msb.bit_count);
-                }
-            }
-            UnderlyingBytesRegions::Single {
-                bit_offset,
-                bit_count,
-            } => read_and_test!(0, bit_offset, bit_count),
-        }
-
-        true
+        result.is_ok()
     }
 
     #[inline]
