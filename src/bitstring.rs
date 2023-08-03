@@ -708,11 +708,57 @@ impl<'a, E: BitStringEnd<'a>> Destination for PushDestination<'a, E> {
     }
 }
 
-pub trait BitStringEnd<'a> {
+mod private {
+    use crate::ref_encoding::bit_pointer::BitPointer;
+    use crate::BitString;
+
+    pub trait PrivateBitStringEnd {
+        fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer, usize) -> R) -> Option<R>;
+        fn bit_string(&mut self) -> &mut BitString;
+    }
+}
+
+pub trait BitStringEnd<'a>: private::PrivateBitStringEnd {
     fn push<S: BitSource>(&mut self, source: S);
-    fn pop(&mut self) -> Option<BitValue>;
-    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P>;
-    fn pop_n(&mut self, bit_count: usize) -> Option<BitString>;
+
+    #[inline]
+    fn pop(&mut self) -> Option<BitValue> {
+        self.pop_bits(1, |bit_ptr, _bit_count| {
+            let accessor = BitAccessor::new(bit_ptr);
+            accessor.get()
+        })
+    }
+
+    #[inline]
+    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
+        self.pop_bits(P::BIT_COUNT, |bit_ptr, _bit_count| {
+            let mut value = P::ZERO;
+            let src = bit_ptr;
+            let dst = slice::from_mut(&mut value);
+            unsafe { copy_bits_to_primitives(src, dst, P::BIT_COUNT) };
+            value
+        })
+    }
+
+    #[inline]
+    fn pop_n(&mut self, bit_count: usize) -> Option<BitString> {
+        self.pop_bits(bit_count, |bit_ptr, bit_count| {
+            let mut buffer = LinearDeque::new();
+            let offset = Offset::new(0);
+            let elems_count = required_bytes(offset, bit_count);
+            buffer.resize(elems_count, 0u8);
+
+            let src = bit_ptr;
+            let dst = BitPointer::new(buffer.deref_mut().into(), offset);
+            unsafe { copy_bits(src, dst, bit_count) };
+
+            BitString {
+                buffer,
+                offset,
+                bit_count,
+            }
+        })
+    }
 
     #[inline]
     fn pop_up_to(&mut self, bit_count: usize) -> BitString {
@@ -726,17 +772,19 @@ pub trait BitStringEnd<'a> {
         }
     }
 
-    fn discard(&mut self, bit_count: usize);
+    #[inline]
+    fn discard(&mut self, bit_count: usize) {
+        let bit_count = cmp::min(bit_count, self.bit_string().bit_count);
+        self.pop_bits(bit_count, |_, _| {});
+    }
 
     fn resize(&mut self, new_len: usize, value: BitValue);
     fn reserved_space(&self) -> usize;
     fn set_reserved_space(&mut self, set_reserved_space: SetReservedSpace);
-
-    fn bit_string(&mut self) -> &mut BitString;
 }
 
 pub struct BitStringLsbEnd<'a>(&'a mut BitString);
-impl<'a> BitStringLsbEnd<'a> {
+impl<'a> private::PrivateBitStringEnd for BitStringLsbEnd<'a> {
     fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer, usize) -> R) -> Option<R> {
         (bit_count <= self.0.bit_count).then(|| {
             let bit_ptr = BitPointer::new(self.0.buffer.as_ref().into(), self.0.offset);
@@ -770,6 +818,11 @@ impl<'a> BitStringLsbEnd<'a> {
             value
         })
     }
+
+    #[inline]
+    fn bit_string(&mut self) -> &mut BitString {
+        self.0
+    }
 }
 impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
     fn push<S: BitSource>(&mut self, source: S) {
@@ -800,26 +853,6 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
         self.0.bit_count += pushed_bits_count;
     }
 
-    #[inline]
-    fn pop(&mut self) -> Option<BitValue> {
-        self.pop_bits(1, get_bit_value_from_bit_str)
-    }
-
-    #[inline]
-    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
-        self.pop_bits(P::BIT_COUNT, get_primitive_from_bit_str)
-    }
-
-    #[inline]
-    fn pop_n(&mut self, bit_count: usize) -> Option<BitString> {
-        self.pop_bits(bit_count, get_bit_string_from_bit_str)
-    }
-
-    #[inline]
-    fn discard(&mut self, bit_count: usize) {
-        self.pop_bits(cmp::min(bit_count, self.0.bit_count), |_, _| {});
-    }
-
     fn resize(&mut self, new_len: usize, value: BitValue) {
         match self.0.bit_count.cmp(&new_len) {
             Ordering::Less => self.push(RepeatedBitSource {
@@ -846,15 +879,10 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
         self.0
             .set_reserved_space(SetReservedSpace::Keep, set_reserved_space);
     }
-
-    #[inline]
-    fn bit_string(&mut self) -> &mut BitString {
-        self.0
-    }
 }
 
 pub struct BitStringMsbEnd<'a>(&'a mut BitString);
-impl<'a> BitStringMsbEnd<'a> {
+impl<'a> private::PrivateBitStringEnd for BitStringMsbEnd<'a> {
     fn pop_bits<R>(&mut self, bit_count: usize, f: fn(BitPointer, usize) -> R) -> Option<R> {
         (bit_count <= self.0.bit_count).then(|| {
             let bit_ptr = BitPointer::new_normalized(
@@ -870,6 +898,11 @@ impl<'a> BitStringMsbEnd<'a> {
 
             value
         })
+    }
+
+    #[inline]
+    fn bit_string(&mut self) -> &mut BitString {
+        self.0
     }
 }
 impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
@@ -900,26 +933,6 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
         self.0.bit_count += pushed_bits_count;
     }
 
-    #[inline]
-    fn pop(&mut self) -> Option<BitValue> {
-        self.pop_bits(1, get_bit_value_from_bit_str)
-    }
-
-    #[inline]
-    fn pop_primitive<P: BitsPrimitive>(&mut self) -> Option<P> {
-        self.pop_bits(P::BIT_COUNT, get_primitive_from_bit_str)
-    }
-
-    #[inline]
-    fn pop_n(&mut self, bit_count: usize) -> Option<BitString> {
-        self.pop_bits(bit_count, get_bit_string_from_bit_str)
-    }
-
-    #[inline]
-    fn discard(&mut self, bit_count: usize) {
-        self.pop_bits(cmp::min(bit_count, self.0.bit_count), |_, _| {});
-    }
-
     fn resize(&mut self, new_len: usize, value: BitValue) {
         match self.0.bit_count.cmp(&new_len) {
             Ordering::Less => self.push(RepeatedBitSource {
@@ -944,11 +957,6 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
     fn set_reserved_space(&mut self, set_reserved_space: SetReservedSpace) {
         self.0
             .set_reserved_space(set_reserved_space, SetReservedSpace::Keep);
-    }
-
-    #[inline]
-    fn bit_string(&mut self) -> &mut BitString {
-        self.0
     }
 }
 
@@ -981,39 +989,6 @@ impl Iterator for RepeatedBitSource {
             self.count -= count;
             CountedBits::with_count(bits, count)
         })
-    }
-}
-
-#[inline]
-fn get_bit_value_from_bit_str(bit_ptr: BitPointer, _bit_count: usize) -> BitValue {
-    let accessor = BitAccessor::new(bit_ptr);
-    accessor.get()
-}
-
-#[inline]
-fn get_primitive_from_bit_str<P: BitsPrimitive>(bit_ptr: BitPointer, _bit_count: usize) -> P {
-    let mut value = P::ZERO;
-    let src = bit_ptr;
-    let dst = slice::from_mut(&mut value);
-    unsafe { copy_bits_to_primitives(src, dst, P::BIT_COUNT) };
-    value
-}
-
-#[inline]
-fn get_bit_string_from_bit_str(bit_ptr: BitPointer, bit_count: usize) -> BitString {
-    let mut buffer = LinearDeque::new();
-    let offset = Offset::new(0);
-    let elems_count = required_bytes(offset, bit_count);
-    buffer.resize(elems_count, 0u8);
-
-    let src = bit_ptr;
-    let dst = BitPointer::new(buffer.deref_mut().into(), offset);
-    unsafe { copy_bits(src, dst, bit_count) };
-
-    BitString {
-        buffer,
-        offset,
-        bit_count,
     }
 }
 
