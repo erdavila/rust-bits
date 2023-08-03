@@ -726,6 +726,8 @@ pub trait BitStringEnd<'a> {
         }
     }
 
+    fn discard(&mut self, bit_count: usize);
+
     fn resize(&mut self, new_len: usize, value: BitValue);
     fn reserved_space(&self) -> usize;
     fn set_reserved_space(&mut self, set_reserved_space: SetReservedSpace);
@@ -811,6 +813,11 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
     #[inline]
     fn pop_n(&mut self, bit_count: usize) -> Option<BitString> {
         self.pop_bits(bit_count, get_bit_string_from_bit_str)
+    }
+
+    #[inline]
+    fn discard(&mut self, bit_count: usize) {
+        self.pop_bits(cmp::min(bit_count, self.0.bit_count), |_, _| {});
     }
 
     fn resize(&mut self, new_len: usize, value: BitValue) {
@@ -906,6 +913,11 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
     #[inline]
     fn pop_n(&mut self, bit_count: usize) -> Option<BitString> {
         self.pop_bits(bit_count, get_bit_string_from_bit_str)
+    }
+
+    #[inline]
+    fn discard(&mut self, bit_count: usize) {
+        self.pop_bits(cmp::min(bit_count, self.0.bit_count), |_, _| {});
     }
 
     fn resize(&mut self, new_len: usize, value: BitValue) {
@@ -1811,6 +1823,32 @@ mod tests {
             assert_bitstring!(bit_string.msb().pop_up_to(5), bitstring!("1100"));
             assert_bitstring!(bit_string, bitstring!(""));
         }
+    }
+
+    #[test]
+    fn lsb_discard() {
+        let mut bit_string = bitstring!("10010011");
+
+        bit_string.lsb().discard(5);
+
+        assert_bitstring!(bit_string, bitstring!("100"));
+
+        bit_string.lsb().discard(5);
+
+        assert_bitstring!(bit_string, bitstring!(""));
+    }
+
+    #[test]
+    fn msb_discard() {
+        let mut bit_string = bitstring!("10010011");
+
+        bit_string.msb().discard(5);
+
+        assert_bitstring!(bit_string, bitstring!("011"));
+
+        bit_string.msb().discard(5);
+
+        assert_bitstring!(bit_string, bitstring!(""));
     }
 
     #[test]
