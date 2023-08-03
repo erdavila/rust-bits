@@ -18,7 +18,6 @@ use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::pointer::Pointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::underlying_bytes_regions::UnderlyingBytesRegions;
 use crate::utils::{required_bytes, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
@@ -69,11 +68,6 @@ impl BitString {
         };
 
         components.encode()
-    }
-
-    #[inline]
-    fn underlying_bytes_regions(&self) -> UnderlyingBytesRegions {
-        UnderlyingBytesRegions::new(self.offset, self.bit_count)
     }
 
     #[inline]
@@ -507,53 +501,11 @@ impl<'a> BitStringLsbEnd<'a> {
             let bit_ptr = BitPointer::new(self.0.buffer.as_ref().into(), self.0.offset);
             let value = f(bit_ptr, bit_count);
 
-            let mut bits_to_discard = bit_count;
-            match self.0.underlying_bytes_regions() {
-                UnderlyingBytesRegions::Multiple {
-                    lsb_byte,
-                    full_bytes,
-                    msb_byte,
-                } => 'elem_discard: {
-                    if let Some(lsb) = lsb_byte {
-                        if lsb.bit_count <= bits_to_discard {
-                            self.0.buffer.pop_front();
-                            bits_to_discard -= lsb.bit_count;
-                        } else {
-                            break 'elem_discard;
-                        }
-                    }
-
-                    if let Some(full) = full_bytes {
-                        for _ in full.indexes {
-                            if u8::BIT_COUNT <= bits_to_discard {
-                                self.0.buffer.pop_front();
-                                bits_to_discard -= u8::BIT_COUNT;
-                            } else {
-                                break 'elem_discard;
-                            }
-                        }
-                    }
-
-                    if let Some(msb) = msb_byte {
-                        if msb.bit_count == bits_to_discard {
-                            self.0.buffer.pop_front();
-                        } else {
-                            break 'elem_discard;
-                        }
-                    }
-                }
-                UnderlyingBytesRegions::Single {
-                    bit_offset: _,
-                    bit_count,
-                } => {
-                    if bit_count == bits_to_discard {
-                        self.0.buffer.pop_front();
-                    }
-                }
-            }
-
             self.0.offset = Offset::new(self.0.offset.value() + bit_count);
             self.0.bit_count -= bit_count;
+
+            let byte_count = required_bytes(self.0.offset, self.0.bit_count);
+            self.0.buffer.resize_at_front(byte_count, 0);
 
             value
         })
@@ -614,52 +566,10 @@ impl<'a> BitStringMsbEnd<'a> {
             );
             let value = f(bit_ptr, bit_count);
 
-            let mut bits_to_discard = bit_count;
-            match self.0.underlying_bytes_regions() {
-                UnderlyingBytesRegions::Multiple {
-                    lsb_byte,
-                    full_bytes,
-                    msb_byte,
-                } => 'elem_discard: {
-                    if let Some(msb) = msb_byte {
-                        if msb.bit_count <= bits_to_discard {
-                            self.0.buffer.pop_back();
-                            bits_to_discard -= msb.bit_count;
-                        } else {
-                            break 'elem_discard;
-                        }
-                    }
-
-                    if let Some(full) = full_bytes {
-                        for _ in full.indexes {
-                            if u8::BIT_COUNT <= bits_to_discard {
-                                self.0.buffer.pop_back();
-                                bits_to_discard -= u8::BIT_COUNT;
-                            } else {
-                                break 'elem_discard;
-                            }
-                        }
-                    }
-
-                    if let Some(lsb) = lsb_byte {
-                        if lsb.bit_count == bits_to_discard {
-                            self.0.buffer.pop_back();
-                        } else {
-                            break 'elem_discard;
-                        }
-                    }
-                }
-                UnderlyingBytesRegions::Single {
-                    bit_offset: _,
-                    bit_count,
-                } => {
-                    if bit_count == bits_to_discard {
-                        self.0.buffer.pop_front();
-                    }
-                }
-            }
-
             self.0.bit_count -= bit_count;
+
+            let byte_count = required_bytes(self.0.offset, self.0.bit_count);
+            self.0.buffer.resize_at_back(byte_count, 0);
 
             value
         })
