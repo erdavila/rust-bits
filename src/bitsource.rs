@@ -9,7 +9,7 @@ use crate::{BitString, BitValue};
 
 use self::private::PrivateBitSource;
 
-mod private {
+pub(crate) mod private {
     use crate::copy_bits::Destination;
 
     pub trait PrivateBitSource {

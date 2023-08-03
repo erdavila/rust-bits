@@ -1,4 +1,5 @@
 use std::borrow::{Borrow, BorrowMut};
+use std::cmp::{self, Ordering};
 use std::fmt::{Binary, Debug, Display, LowerHex, UpperHex};
 use std::hash::Hash;
 use std::iter::FusedIterator;
@@ -14,11 +15,12 @@ use crate::copy_bits::{
     bit_values_source, copy_bits, copy_bits_loop, copy_bits_to_primitives, Destination,
 };
 use crate::iter::BitIterator;
+use crate::private::PrivateBitSource;
 use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::pointer::Pointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::{required_bytes, CountedBits};
+use crate::utils::{required_bytes, BitPattern, CountedBits};
 use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
 
 #[derive(Clone)]
@@ -491,6 +493,8 @@ pub trait BitStringEnd<'a> {
         }
     }
 
+    fn resize(&mut self, new_len: usize, value: BitValue);
+
     fn bit_string(&mut self) -> &mut BitString;
 }
 
@@ -548,6 +552,22 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
     #[inline]
     fn pop_n(&mut self, bit_count: usize) -> Option<BitString> {
         self.pop_bits(bit_count, get_bit_string_from_bit_str)
+    }
+
+    fn resize(&mut self, new_len: usize, value: BitValue) {
+        match self.0.bit_count.cmp(&new_len) {
+            Ordering::Less => self.push(RepeatedBitSource {
+                value,
+                count: new_len - self.0.bit_count,
+            }),
+            Ordering::Equal => (),
+            Ordering::Greater => {
+                self.0.offset = Offset::new(self.0.offset.value() + (self.0.bit_count - new_len));
+                let byte_count = required_bytes(self.0.offset, new_len);
+                self.0.buffer.resize_at_front(byte_count, 0);
+                self.0.bit_count = new_len;
+            }
+        }
     }
 
     #[inline]
@@ -611,9 +631,56 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
         self.pop_bits(bit_count, get_bit_string_from_bit_str)
     }
 
+    fn resize(&mut self, new_len: usize, value: BitValue) {
+        match self.0.bit_count.cmp(&new_len) {
+            Ordering::Less => self.push(RepeatedBitSource {
+                value,
+                count: new_len - self.0.bit_count,
+            }),
+            Ordering::Equal => (),
+            Ordering::Greater => {
+                let byte_count = required_bytes(self.0.offset, new_len);
+                self.0.buffer.resize_at_back(byte_count, 0);
+                self.0.bit_count = new_len;
+            }
+        }
+    }
+
     #[inline]
     fn bit_string(&mut self) -> &mut BitString {
         self.0
+    }
+}
+
+struct RepeatedBitSource {
+    value: BitValue,
+    count: usize,
+}
+impl BitSource for RepeatedBitSource {}
+impl PrivateBitSource for RepeatedBitSource {
+    #[inline]
+    fn bit_count(&self) -> usize {
+        self.count
+    }
+
+    #[inline]
+    fn copy_bits_to(self, dst: impl Destination) {
+        copy_bits_loop(self, dst);
+    }
+}
+impl Iterator for RepeatedBitSource {
+    type Item = CountedBits<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.count > 0).then(|| {
+            let count = cmp::min(self.count, u8::BIT_COUNT);
+            let bits = match self.value {
+                BitValue::Zero => 0,
+                BitValue::One => BitPattern::new_with_zeros().and_ones(count).get(),
+            };
+            self.count -= count;
+            CountedBits::with_count(bits, count)
+        })
     }
 }
 
@@ -783,7 +850,8 @@ mod tests {
             let bit_string = &$value;
             assert_eq!(
                 bit_string.buffer.len(),
-                $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count)
+                $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count),
+                "buffer.len()"
             );
             assert_eq!(*bit_string, $expected);
         }};
@@ -1465,6 +1533,33 @@ mod tests {
             assert_bitstring!(bit_string.msb().pop_up_to(5), bitstring!("1100"));
             assert_bitstring!(bit_string, bitstring!(""));
         }
+    }
+
+    #[test]
+    fn resize() {
+        macro_rules! assert_resize {
+            ($initial:literal , $end:ident () . resize ( $new_len:expr, $bit:ident ), $expected:expr) => {
+                let mut bit_string = bitstring!($initial);
+
+                bit_string.$end().resize($new_len, $bit);
+
+                assert_bitstring!(bit_string, bitstring!($expected));
+            };
+        }
+
+        assert_resize!("10010011", msb().resize(10, Zero), "00_10010011");
+        assert_resize!("10010011", msb().resize(10, One), "11_10010011");
+        assert_resize!("10010011", msb().resize(8, Zero), "10010011");
+        assert_resize!("10010011", msb().resize(8, One), "10010011");
+        assert_resize!("10010011", msb().resize(6, Zero), "010011");
+        assert_resize!("10010011", msb().resize(6, One), "010011");
+
+        assert_resize!("10010011", lsb().resize(10, Zero), "10010011_00");
+        assert_resize!("10010011", lsb().resize(10, One), "10010011_11");
+        assert_resize!("10010011", lsb().resize(8, Zero), "10010011");
+        assert_resize!("10010011", lsb().resize(8, One), "10010011");
+        assert_resize!("10010011", lsb().resize(6, Zero), "100100");
+        assert_resize!("10010011", lsb().resize(6, One), "100100");
     }
 
     #[test]
