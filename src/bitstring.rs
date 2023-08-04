@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::{Deref, DerefMut};
+use std::ops::{BitAnd, BitAndAssign, Deref, DerefMut};
 use std::slice;
 use std::str::FromStr;
 
@@ -20,14 +20,17 @@ use crate::ref_encoding::bit_pointer::BitPointer;
 use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::pointer::Pointer;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::{required_bytes, BitPattern, CountedBits};
-use crate::{BitAccessor, BitSource, BitStr, BitValue, BitsPrimitive, PrimitiveAccessor};
+use crate::utils::{required_bytes, BitPattern, CountedBits, Either};
+use crate::{
+    consume_iterator, consume_iterator_pair, BitAccessor, BitSource, BitStr, BitValue,
+    BitsPrimitive, PrimitiveAccessor,
+};
 
 #[derive(Clone)]
 pub struct BitString {
-    buffer: LinearDeque<u8>,
-    offset: Offset,
-    bit_count: usize,
+    pub(crate) buffer: LinearDeque<u8>,
+    pub(crate) offset: Offset,
+    pub(crate) bit_count: usize,
 }
 
 impl BitString {
@@ -442,6 +445,104 @@ impl BitStringParseError {
     }
 }
 
+impl BitAnd for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: Self) -> Self::Output {
+        self & rhs.as_bit_str()
+    }
+}
+
+impl BitAnd<&BitStr> for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: &BitStr) -> Self::Output {
+        self.as_bit_str() & rhs
+    }
+}
+
+impl BitAnd<&mut BitStr> for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: &mut BitStr) -> Self::Output {
+        self.as_bit_str() & rhs
+    }
+}
+
+impl BitAnd<BitString> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: BitString) -> Self::Output {
+        self & rhs.as_bit_str()
+    }
+}
+
+impl BitAnd<BitString> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: BitString) -> Self::Output {
+        self & rhs.as_bit_str()
+    }
+}
+
+impl BitAndAssign for BitString {
+    #[inline]
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self &= rhs.as_bit_str();
+    }
+}
+
+impl BitAndAssign<&BitStr> for BitString {
+    fn bitand_assign(&mut self, rhs: &BitStr) {
+        let result = consume_iterator_pair(
+            self.iter_mut(),
+            rhs.iter(),
+            &mut (),
+            |_, left_byte, right_byte| {
+                left_byte.modify(|left_bit| left_bit & right_byte);
+                Ok(())
+            },
+            |_, left_bit, right_bit| {
+                left_bit.modify(|left_bit| left_bit & right_bit);
+                Ok(())
+            },
+            |_, iter| match iter {
+                Either::Left(left_iter) => consume_iterator(
+                    left_iter,
+                    &mut (),
+                    |_, byte| {
+                        byte.write(0);
+                        Ok(())
+                    },
+                    |_, bit| {
+                        bit.write(BitValue::Zero);
+                        Ok(())
+                    },
+                ),
+                Either::Right(right_iter) => Err(right_iter.len()),
+            },
+        );
+
+        if let Err(grow) = result {
+            #[allow(clippy::suspicious_op_assign_impl)]
+            let new_len = self.bit_count + grow;
+            self.msb().resize(new_len, BitValue::Zero);
+        }
+    }
+}
+
+impl BitAndAssign<&mut BitStr> for BitString {
+    #[inline]
+    fn bitand_assign(&mut self, rhs: &mut BitStr) {
+        *self &= rhs as &BitStr;
+    }
+}
+
 struct PushDestination<'a, E: BitStringEnd<'a>> {
     end: E,
     buffer: CountedBits<u8>,
@@ -838,24 +939,6 @@ mod tests {
     use crate::iter::BitIterator;
     use crate::BitValue::{One, Zero};
     use crate::{BitStr, BitString, BitStringEnd};
-
-    macro_rules! bitstring {
-        ($str:expr) => {
-            $str.parse::<$crate::BitString>().unwrap()
-        };
-    }
-
-    macro_rules! assert_bitstring {
-        ($value:expr, $expected:expr) => {{
-            let bit_string = &$value;
-            assert_eq!(
-                bit_string.buffer.len(),
-                $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count),
-                "buffer.len()"
-            );
-            assert_eq!(*bit_string, $expected);
-        }};
-    }
 
     #[test]
     fn new() {
@@ -1904,5 +1987,56 @@ mod tests {
         assert_format!(bit_string, ":#x", "0b110:0xc");
         assert_format!(bit_string, ":X", "110:C");
         assert_format!(bit_string, ":#X", "0b110:0xC");
+    }
+
+    mod bitand {
+        use crate::BitString;
+
+        fn str_1() -> BitString {
+            bitstring!("1100_11001100")
+        }
+
+        fn str_2() -> BitString {
+            bitstring!("10_10101010__1010_10101010")
+        }
+
+        fn expected_result() -> BitString {
+            bitstring!("00_00000000__1000_10001000")
+        }
+
+        #[test]
+        fn binary_operation() {
+            assert_bitstring!(str_1() & str_1(), str_1());
+            assert_bitstring!(str_2() & str_2(), str_2());
+
+            assert_bitstring!(str_1() & str_2(), expected_result());
+            assert_bitstring!(str_1() & str_2().as_bit_str(), expected_result());
+            assert_bitstring!(str_1() & str_2().as_bit_str_mut(), expected_result());
+            assert_bitstring!(str_1().as_bit_str() & str_2(), expected_result());
+            assert_bitstring!(str_1().as_bit_str_mut() & str_2(), expected_result());
+        }
+
+        #[test]
+        fn assign() {
+            let mut str = str_1();
+            str &= str_1();
+            assert_bitstring!(str, str_1());
+
+            let mut str = str_1();
+            str &= str_2();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_1();
+            str &= str_2().as_bit_str();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_1();
+            str &= str_2().as_bit_str_mut();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_2();
+            str &= str_1();
+            assert_bitstring!(str, expected_result());
+        }
     }
 }

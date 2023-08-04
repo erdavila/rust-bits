@@ -14,6 +14,25 @@
 //! If you want to have the bits 8 to 15 of a `u16` value come first, you must
 //! explicitly [swap its bytes](u16::swap_bytes).
 
+#[cfg(test)]
+macro_rules! bitstring {
+    ($str:expr) => {
+        $str.parse::<$crate::BitString>().unwrap()
+    };
+}
+
+#[cfg(test)]
+macro_rules! assert_bitstring {
+    ($value:expr, $expected:expr) => {{
+        let bit_string: &$crate::BitString = &$value;
+        assert_eq!(
+            bit_string.buffer.len(),
+            $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count)
+        );
+        assert_eq!(*bit_string, $expected);
+    }};
+}
+
 mod bit;
 mod bitsource;
 mod bitsprimitive;

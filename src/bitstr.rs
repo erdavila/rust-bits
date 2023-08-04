@@ -1,15 +1,21 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
 use std::ops::{
-    Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo,
-    RangeToInclusive,
+    BitAnd, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive,
+    RangeTo, RangeToInclusive,
 };
+
+use linear_deque::SetReservedSpace;
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::ref_encoding::bit_pointer::BitPointer;
+use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::{CountedBits, Either};
-use crate::{Bit, BitAccessor, BitString, BitValue, BitsPrimitive, Primitive, PrimitiveAccessor};
+use crate::utils::{required_bytes, CountedBits, Either};
+use crate::{
+    Bit, BitAccessor, BitString, BitStringEnd, BitValue, BitsPrimitive, Primitive,
+    PrimitiveAccessor,
+};
 
 mod fmt;
 
@@ -354,7 +360,7 @@ impl<'a> IntoIterator for &'a BitStr {
     }
 }
 
-fn consume_iterator<'a, I, State, FByte, FBit, Error>(
+pub(crate) fn consume_iterator<'a, I, State, FByte, FBit, Error>(
     mut iter: I,
     state: &mut State,
     mut consume_byte: FByte,
@@ -376,7 +382,17 @@ where
     Ok(())
 }
 
-fn consume_iterator_pair<'left, 'right, ILeft, IRight, State, FByte, FBit, FIter, Error>(
+pub(crate) fn consume_iterator_pair<
+    'left,
+    'right,
+    ILeft,
+    IRight,
+    State,
+    FByte,
+    FBit,
+    FIter,
+    Error,
+>(
     mut left_iter: ILeft,
     mut right_iter: IRight,
     state: &mut State,
@@ -579,6 +595,52 @@ impl<'a> PartialOrd for NumericValue<'a> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl BitAnd<&BitStr> for &BitStr {
+    type Output = BitString;
+
+    fn bitand(self, rhs: &BitStr) -> Self::Output {
+        let mut output = BitString::new();
+
+        let bit_count = cmp::max(self.len(), rhs.len());
+        let byte_count = required_bytes(Offset::new(0), bit_count);
+        output
+            .buffer
+            .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
+
+        output.msb().push(self);
+        output &= rhs;
+
+        output
+    }
+}
+
+impl BitAnd<&mut BitStr> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: &mut BitStr) -> Self::Output {
+        self & (rhs as &BitStr)
+    }
+}
+
+impl BitAnd<&BitStr> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: &BitStr) -> Self::Output {
+        (self as &BitStr) & rhs
+    }
+}
+
+impl BitAnd<&mut BitStr> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitand(self, rhs: &mut BitStr) -> Self::Output {
+        self & (rhs as &BitStr)
     }
 }
 
@@ -947,5 +1009,27 @@ mod tests {
         let bit_string: BitString = bit_str.to_owned();
 
         assert_eq!(bit_string, "001001".parse::<BitString>().unwrap());
+    }
+
+    #[test]
+    fn bitand() {
+        let mut str_1 = bitstring!("1100_11001100");
+        let mut str_2 = bitstring!("10__1010_10101010");
+        //         1100_11001100
+        //  &  10__1010_10101010
+        // ---------------------
+        //  =  00__1000_10001000
+        let expected_result = bitstring!("00__1000_10001000");
+
+        assert_bitstring!(str_1.as_bit_str() & str_1.as_bit_str(), str_1);
+        assert_bitstring!(str_2.as_bit_str() & str_2.as_bit_str(), str_2);
+
+        assert_bitstring!(str_1.as_bit_str() & str_2.as_bit_str(), expected_result);
+        assert_bitstring!(str_1.as_bit_str() & str_2.as_bit_str_mut(), expected_result);
+        assert_bitstring!(str_1.as_bit_str_mut() & str_2.as_bit_str(), expected_result);
+        assert_bitstring!(
+            str_1.as_bit_str_mut() & str_2.as_bit_str_mut(),
+            expected_result
+        );
     }
 }
