@@ -9,7 +9,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut};
 use std::slice;
 use std::str::FromStr;
 
-use linear_deque::{LinearDeque, SetReservedSpace};
+use linear_deque::LinearDeque;
 
 use crate::copy_bits::{
     bit_values_source, copy_bits, copy_bits_loop, copy_bits_to_primitives, Destination,
@@ -445,195 +445,125 @@ impl BitStringParseError {
     }
 }
 
-impl BitAnd for BitString {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: Self) -> Self::Output {
-        self & rhs.as_bit_str()
+fn bit_op_assign_impl<FByte, FBit>(this: &mut BitString, rhs: &BitStr, byte_op: FByte, bit_op: FBit)
+where
+    FByte: Fn(u8, u8) -> u8,
+    FBit: Fn(BitValue, BitValue) -> BitValue,
+{
+    if rhs.len() > this.len() {
+        this.msb().resize(rhs.len(), BitValue::Zero);
     }
-}
 
-impl BitAnd<&BitStr> for BitString {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: &BitStr) -> Self::Output {
-        self.as_bit_str() & rhs
-    }
-}
-
-impl BitAnd<&mut BitStr> for BitString {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: &mut BitStr) -> Self::Output {
-        self.as_bit_str() & rhs
-    }
-}
-
-impl BitAnd<BitString> for &BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: BitString) -> Self::Output {
-        self & rhs.as_bit_str()
-    }
-}
-
-impl BitAnd<BitString> for &mut BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: BitString) -> Self::Output {
-        self & rhs.as_bit_str()
-    }
-}
-
-impl BitAndAssign for BitString {
-    #[inline]
-    fn bitand_assign(&mut self, rhs: Self) {
-        *self &= rhs.as_bit_str();
-    }
-}
-
-impl BitAndAssign<&BitStr> for BitString {
-    fn bitand_assign(&mut self, rhs: &BitStr) {
-        let result = consume_iterator_pair(
-            self.iter_mut(),
-            rhs.iter(),
-            &mut (),
-            |_, left_byte, right_byte| {
-                left_byte.modify(|left_bit| left_bit & right_byte);
-                Ok(())
-            },
-            |_, left_bit, right_bit| {
-                left_bit.modify(|left_bit| left_bit & right_bit);
-                Ok(())
-            },
-            |_, iter| match iter {
-                Either::Left(left_iter) => consume_iterator(
-                    left_iter,
+    let result: Result<(), ()> = consume_iterator_pair(
+        this.iter_mut(),
+        rhs.iter(),
+        &mut (),
+        |_, this_byte, rhs_byte| {
+            this_byte.modify(|this_byte| byte_op(this_byte, rhs_byte));
+            Ok(())
+        },
+        |_, this_bit, rhs_bit| {
+            this_bit.modify(|this_bit| bit_op(this_bit, rhs_bit));
+            Ok(())
+        },
+        |_, iter| {
+            if let Either::Left(this_iter) = iter {
+                consume_iterator(
+                    this_iter,
                     &mut (),
-                    |_, byte| {
-                        byte.write(0);
+                    |_, rhs_byte| {
+                        rhs_byte.modify(|this_byte| byte_op(this_byte, 0u8));
                         Ok(())
                     },
-                    |_, bit| {
-                        bit.write(BitValue::Zero);
+                    |_, rhs_bit| {
+                        rhs_bit.modify(|this_bit| bit_op(this_bit, BitValue::Zero));
                         Ok(())
                     },
-                ),
-                Either::Right(right_iter) => Err(right_iter.len()),
-            },
-        );
-
-        if let Err(grow) = result {
-            #[allow(clippy::suspicious_op_assign_impl)]
-            let new_len = self.bit_count + grow;
-            self.msb().resize(new_len, BitValue::Zero);
-        }
-    }
-}
-
-impl BitAndAssign<&mut BitStr> for BitString {
-    #[inline]
-    fn bitand_assign(&mut self, rhs: &mut BitStr) {
-        *self &= rhs as &BitStr;
-    }
-}
-
-impl BitOr for BitString {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: Self) -> Self::Output {
-        self | rhs.as_bit_str()
-    }
-}
-
-impl BitOr<&BitStr> for BitString {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: &BitStr) -> Self::Output {
-        self.as_bit_str() | rhs
-    }
-}
-
-impl BitOr<&mut BitStr> for BitString {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: &mut BitStr) -> Self::Output {
-        self.as_bit_str() | rhs
-    }
-}
-
-impl BitOr<BitString> for &BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: BitString) -> Self::Output {
-        self | rhs.as_bit_str()
-    }
-}
-
-impl BitOr<BitString> for &mut BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: BitString) -> Self::Output {
-        self | rhs.as_bit_str()
-    }
-}
-
-impl BitOrAssign for BitString {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self |= rhs.as_bit_str();
-    }
-}
-
-impl BitOrAssign<&BitStr> for BitString {
-    fn bitor_assign(&mut self, rhs: &BitStr) {
-        let bit_count = cmp::max(self.len(), rhs.len());
-        let byte_count = required_bytes(self.offset, bit_count);
-        self.buffer
-            .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
-
-        let result = consume_iterator_pair(
-            self.iter_mut(),
-            rhs.iter(),
-            &mut (),
-            |_, left_byte, right_byte| {
-                left_byte.modify(|left_bit| left_bit | right_byte);
+                )
+            } else {
                 Ok(())
-            },
-            |_, left_bit, right_bit| {
-                left_bit.modify(|left_bit| left_bit | right_bit);
-                Ok(())
-            },
-            |_, iter| match iter {
-                Either::Left(_) => Ok(()),
-                Either::Right(right_iter) => Err(right_iter),
-            },
-        );
+            }
+        },
+    );
+    result.unwrap();
+}
 
-        if let Err(right_iter) = result {
-            let src = bit_values_source(right_iter);
-            let dst = PushDestination::new(self.msb());
-            copy_bits_loop(src, dst);
+macro_rules! impl_bit_op {
+    ($op_trait:ident :: $op_method:ident, $op_assign_trait:ident :: $op_assign_method:ident; $op:tt, $op_assign:tt) => {
+        impl $op_trait for BitString {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: Self) -> Self::Output {
+                self $op rhs.as_bit_str()
+            }
         }
-    }
+
+        impl $op_trait<&BitStr> for BitString {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: &BitStr) -> Self::Output {
+                self.as_bit_str() $op rhs
+            }
+        }
+
+        impl $op_trait<&mut BitStr> for BitString {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: &mut BitStr) -> Self::Output {
+                self.as_bit_str() $op rhs
+            }
+        }
+
+        impl $op_trait<BitString> for &BitStr {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: BitString) -> Self::Output {
+                self $op rhs.as_bit_str()
+            }
+        }
+
+        impl $op_trait<BitString> for &mut BitStr {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: BitString) -> Self::Output {
+                self $op rhs.as_bit_str()
+            }
+        }
+
+        impl $op_assign_trait for BitString {
+            #[inline]
+            fn $op_assign_method(&mut self, rhs: Self) {
+                *self $op_assign rhs.as_bit_str();
+            }
+        }
+
+        impl $op_assign_trait<&BitStr> for BitString {
+            fn $op_assign_method(&mut self, rhs: &BitStr) {
+                bit_op_assign_impl(
+                    self,
+                    rhs,
+                    |this_byte, rhs_byte| this_byte $op rhs_byte,
+                    |this_bit, rhs_bit| this_bit $op rhs_bit,
+                );
+            }
+        }
+
+        impl $op_assign_trait<&mut BitStr> for BitString {
+            #[inline]
+            fn $op_assign_method(&mut self, rhs: &mut BitStr) {
+                *self $op_assign rhs as &BitStr;
+            }
+        }
+    };
 }
 
-impl BitOrAssign<&mut BitStr> for BitString {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: &mut BitStr) {
-        *self |= rhs as &BitStr;
-    }
-}
+impl_bit_op!(BitAnd::bitand, BitAndAssign::bitand_assign; &, &=);
+impl_bit_op!(BitOr::bitor, BitOrAssign::bitor_assign; |, |=);
 
 pub(crate) struct PushDestination<'a, E: BitStringEnd<'a>> {
     end: E,

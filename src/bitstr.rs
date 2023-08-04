@@ -598,97 +598,68 @@ impl<'a> PartialOrd for NumericValue<'a> {
     }
 }
 
-impl BitAnd<&BitStr> for &BitStr {
-    type Output = BitString;
+fn bit_op_impl<F>(lhs: &BitStr, rhs: &BitStr, op_assign: F) -> BitString
+where
+    F: FnOnce(&mut BitString),
+{
+    let mut output = BitString::new();
 
-    fn bitand(self, rhs: &BitStr) -> Self::Output {
-        let mut output = BitString::new();
+    let bit_count = cmp::max(lhs.len(), rhs.len());
+    let byte_count = required_bytes(Offset::new(0), bit_count);
+    output
+        .buffer
+        .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
 
-        let bit_count = cmp::max(self.len(), rhs.len());
-        let byte_count = required_bytes(Offset::new(0), bit_count);
-        output
-            .buffer
-            .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
+    output.msb().push(lhs);
+    op_assign(&mut output);
 
-        output.msb().push(self);
-        output &= rhs;
-
-        output
-    }
+    output
 }
 
-impl BitAnd<&mut BitStr> for &BitStr {
-    type Output = BitString;
+macro_rules! impl_bit_op {
+    ($op_trait:ident :: $op_method:ident; $op:tt, $op_assign:tt) => {
+        impl $op_trait<&BitStr> for &BitStr {
+            type Output = BitString;
 
-    #[inline]
-    fn bitand(self, rhs: &mut BitStr) -> Self::Output {
-        self & (rhs as &BitStr)
-    }
+            #[inline]
+            fn $op_method(self, rhs: &BitStr) -> Self::Output {
+                bit_op_impl(self, rhs, |output| {
+                    *output $op_assign rhs
+                })
+            }
+        }
+
+        impl $op_trait<&mut BitStr> for &BitStr {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: &mut BitStr) -> Self::Output {
+                self $op (rhs as &BitStr)
+            }
+        }
+
+        impl $op_trait<&BitStr> for &mut BitStr {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: &BitStr) -> Self::Output {
+                (self as &BitStr) $op rhs
+            }
+        }
+
+        impl $op_trait<&mut BitStr> for &mut BitStr {
+            type Output = BitString;
+
+            #[inline]
+            fn $op_method(self, rhs: &mut BitStr) -> Self::Output {
+                self $op (rhs as &BitStr)
+            }
+        }
+    };
 }
 
-impl BitAnd<&BitStr> for &mut BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: &BitStr) -> Self::Output {
-        (self as &BitStr) & rhs
-    }
-}
-
-impl BitAnd<&mut BitStr> for &mut BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitand(self, rhs: &mut BitStr) -> Self::Output {
-        self & (rhs as &BitStr)
-    }
-}
-
-impl BitOr<&BitStr> for &BitStr {
-    type Output = BitString;
-
-    fn bitor(self, rhs: &BitStr) -> Self::Output {
-        let mut output = BitString::new();
-
-        let bit_count = cmp::max(self.len(), rhs.len());
-        let byte_count = required_bytes(Offset::new(0), bit_count);
-        output
-            .buffer
-            .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
-
-        output.msb().push(self);
-        output |= rhs;
-
-        output
-    }
-}
-
-impl BitOr<&mut BitStr> for &BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: &mut BitStr) -> Self::Output {
-        self | (rhs as &BitStr)
-    }
-}
-
-impl BitOr<&BitStr> for &mut BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: &BitStr) -> Self::Output {
-        (self as &BitStr) | rhs
-    }
-}
-
-impl BitOr<&mut BitStr> for &mut BitStr {
-    type Output = BitString;
-
-    #[inline]
-    fn bitor(self, rhs: &mut BitStr) -> Self::Output {
-        self | (rhs as &BitStr)
-    }
-}
+impl_bit_op!(BitAnd::bitand; &, &=);
+impl_bit_op!(BitOr::bitor; |, |=);
 
 #[cfg(test)]
 mod tests {
