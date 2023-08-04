@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Deref, DerefMut};
 use std::slice;
 use std::str::FromStr;
 
@@ -564,6 +564,7 @@ macro_rules! impl_bit_op {
 
 impl_bit_op!(BitAnd::bitand, BitAndAssign::bitand_assign; &, &=);
 impl_bit_op!(BitOr::bitor, BitOrAssign::bitor_assign; |, |=);
+impl_bit_op!(BitXor::bitxor, BitXorAssign::bitxor_assign; ^, ^=);
 
 pub(crate) struct PushDestination<'a, E: BitStringEnd<'a>> {
     end: E,
@@ -2109,6 +2110,57 @@ mod tests {
 
             let mut str = str_2();
             str |= str_1();
+            assert_bitstring!(str, expected_result());
+        }
+    }
+
+    mod bitxor {
+        use crate::BitString;
+
+        fn str_1() -> BitString {
+            bitstring!("1100_11001100")
+        }
+
+        fn str_2() -> BitString {
+            bitstring!("10_10101010__1010_10101010")
+        }
+
+        fn expected_result() -> BitString {
+            bitstring!("10_10101010__0110_01100110")
+        }
+
+        #[test]
+        fn binary_operation() {
+            assert_bitstring!(str_1() ^ str_1(), bitstring!("0000_00000000"));
+            assert_bitstring!(str_2() ^ str_2(), bitstring!("00_00000000__0000_00000000"));
+
+            assert_bitstring!(str_1() ^ str_2(), expected_result());
+            assert_bitstring!(str_1() ^ str_2().as_bit_str(), expected_result());
+            assert_bitstring!(str_1() ^ str_2().as_bit_str_mut(), expected_result());
+            assert_bitstring!(str_1().as_bit_str() ^ str_2(), expected_result());
+            assert_bitstring!(str_1().as_bit_str_mut() ^ str_2(), expected_result());
+        }
+
+        #[test]
+        fn assign() {
+            let mut str = str_1();
+            str ^= str_1();
+            assert_bitstring!(str, bitstring!("0000_00000000"));
+
+            let mut str = str_1();
+            str ^= str_2();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_1();
+            str ^= str_2().as_bit_str();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_1();
+            str ^= str_2().as_bit_str_mut();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_2();
+            str ^= str_1();
             assert_bitstring!(str, expected_result());
         }
     }

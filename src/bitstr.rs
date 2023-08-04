@@ -1,7 +1,7 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
 use std::ops::{
-    BitAnd, BitOr, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull,
+    BitAnd, BitOr, BitXor, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull,
     RangeInclusive, RangeTo, RangeToInclusive,
 };
 
@@ -660,6 +660,7 @@ macro_rules! impl_bit_op {
 
 impl_bit_op!(BitAnd::bitand; &, &=);
 impl_bit_op!(BitOr::bitor; |, |=);
+impl_bit_op!(BitXor::bitxor; ^, ^=);
 
 #[cfg(test)]
 mod tests {
@@ -1074,5 +1075,35 @@ mod tests {
         );
 
         assert_bitstring!(str_2.as_bit_str() | str_1.as_bit_str(), expected_result);
+    }
+
+    #[test]
+    fn bitxor() {
+        let mut str_1 = bitstring!("1100_11001100");
+        let mut str_2 = bitstring!("10__1010_10101010");
+        //         1100_11001100
+        //  ^  10__1010_10101010
+        // ---------------------
+        //  =  10__0110_01100110
+        let expected_result = bitstring!("10__0110_01100110");
+
+        assert_bitstring!(
+            str_1.as_bit_str() ^ str_1.as_bit_str(),
+            bitstring!("0000_00000000")
+        );
+        assert_bitstring!(
+            str_2.as_bit_str() ^ str_2.as_bit_str(),
+            bitstring!("00__0000_00000000")
+        );
+
+        assert_bitstring!(str_1.as_bit_str() ^ str_2.as_bit_str(), expected_result);
+        assert_bitstring!(str_1.as_bit_str() ^ str_2.as_bit_str_mut(), expected_result);
+        assert_bitstring!(str_1.as_bit_str_mut() ^ str_2.as_bit_str(), expected_result);
+        assert_bitstring!(
+            str_1.as_bit_str_mut() ^ str_2.as_bit_str_mut(),
+            expected_result
+        );
+
+        assert_bitstring!(str_2.as_bit_str() ^ str_1.as_bit_str(), expected_result);
     }
 }
