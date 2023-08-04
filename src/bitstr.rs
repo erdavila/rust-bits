@@ -1,8 +1,8 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
 use std::ops::{
-    BitAnd, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive,
-    RangeTo, RangeToInclusive,
+    BitAnd, BitOr, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull,
+    RangeInclusive, RangeTo, RangeToInclusive,
 };
 
 use linear_deque::SetReservedSpace;
@@ -644,6 +644,52 @@ impl BitAnd<&mut BitStr> for &mut BitStr {
     }
 }
 
+impl BitOr<&BitStr> for &BitStr {
+    type Output = BitString;
+
+    fn bitor(self, rhs: &BitStr) -> Self::Output {
+        let mut output = BitString::new();
+
+        let bit_count = cmp::max(self.len(), rhs.len());
+        let byte_count = required_bytes(Offset::new(0), bit_count);
+        output
+            .buffer
+            .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
+
+        output.msb().push(self);
+        output |= rhs;
+
+        output
+    }
+}
+
+impl BitOr<&mut BitStr> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: &mut BitStr) -> Self::Output {
+        self | (rhs as &BitStr)
+    }
+}
+
+impl BitOr<&BitStr> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: &BitStr) -> Self::Output {
+        (self as &BitStr) | rhs
+    }
+}
+
+impl BitOr<&mut BitStr> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: &mut BitStr) -> Self::Output {
+        self | (rhs as &BitStr)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::convert::identity;
@@ -1031,5 +1077,31 @@ mod tests {
             str_1.as_bit_str_mut() & str_2.as_bit_str_mut(),
             expected_result
         );
+
+        assert_bitstring!(str_2.as_bit_str() & str_1.as_bit_str(), expected_result);
+    }
+
+    #[test]
+    fn bitor() {
+        let mut str_1 = bitstring!("1100_11001100");
+        let mut str_2 = bitstring!("10__1010_10101010");
+        //         1100_11001100
+        //  |  10__1010_10101010
+        // ---------------------
+        //  =  10__1110_11101110
+        let expected_result = bitstring!("10__1110_11101110");
+
+        assert_bitstring!(str_1.as_bit_str() | str_1.as_bit_str(), str_1);
+        assert_bitstring!(str_2.as_bit_str() | str_2.as_bit_str(), str_2);
+
+        assert_bitstring!(str_1.as_bit_str() | str_2.as_bit_str(), expected_result);
+        assert_bitstring!(str_1.as_bit_str() | str_2.as_bit_str_mut(), expected_result);
+        assert_bitstring!(str_1.as_bit_str_mut() | str_2.as_bit_str(), expected_result);
+        assert_bitstring!(
+            str_1.as_bit_str_mut() | str_2.as_bit_str_mut(),
+            expected_result
+        );
+
+        assert_bitstring!(str_2.as_bit_str() | str_1.as_bit_str(), expected_result);
     }
 }

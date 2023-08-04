@@ -5,11 +5,11 @@ use std::hash::Hash;
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::{BitAnd, BitAndAssign, Deref, DerefMut};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut};
 use std::slice;
 use std::str::FromStr;
 
-use linear_deque::LinearDeque;
+use linear_deque::{LinearDeque, SetReservedSpace};
 
 use crate::copy_bits::{
     bit_values_source, copy_bits, copy_bits_loop, copy_bits_to_primitives, Destination,
@@ -543,14 +543,106 @@ impl BitAndAssign<&mut BitStr> for BitString {
     }
 }
 
-struct PushDestination<'a, E: BitStringEnd<'a>> {
+impl BitOr for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self::Output {
+        self | rhs.as_bit_str()
+    }
+}
+
+impl BitOr<&BitStr> for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: &BitStr) -> Self::Output {
+        self.as_bit_str() | rhs
+    }
+}
+
+impl BitOr<&mut BitStr> for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: &mut BitStr) -> Self::Output {
+        self.as_bit_str() | rhs
+    }
+}
+
+impl BitOr<BitString> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: BitString) -> Self::Output {
+        self | rhs.as_bit_str()
+    }
+}
+
+impl BitOr<BitString> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn bitor(self, rhs: BitString) -> Self::Output {
+        self | rhs.as_bit_str()
+    }
+}
+
+impl BitOrAssign for BitString {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self |= rhs.as_bit_str();
+    }
+}
+
+impl BitOrAssign<&BitStr> for BitString {
+    fn bitor_assign(&mut self, rhs: &BitStr) {
+        let bit_count = cmp::max(self.len(), rhs.len());
+        let byte_count = required_bytes(self.offset, bit_count);
+        self.buffer
+            .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
+
+        let result = consume_iterator_pair(
+            self.iter_mut(),
+            rhs.iter(),
+            &mut (),
+            |_, left_byte, right_byte| {
+                left_byte.modify(|left_bit| left_bit | right_byte);
+                Ok(())
+            },
+            |_, left_bit, right_bit| {
+                left_bit.modify(|left_bit| left_bit | right_bit);
+                Ok(())
+            },
+            |_, iter| match iter {
+                Either::Left(_) => Ok(()),
+                Either::Right(right_iter) => Err(right_iter),
+            },
+        );
+
+        if let Err(right_iter) = result {
+            let src = bit_values_source(right_iter);
+            let dst = PushDestination::new(self.msb());
+            copy_bits_loop(src, dst);
+        }
+    }
+}
+
+impl BitOrAssign<&mut BitStr> for BitString {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: &mut BitStr) {
+        *self |= rhs as &BitStr;
+    }
+}
+
+pub(crate) struct PushDestination<'a, E: BitStringEnd<'a>> {
     end: E,
     buffer: CountedBits<u8>,
     phantom: PhantomData<&'a ()>,
 }
 impl<'a, E: BitStringEnd<'a>> PushDestination<'a, E> {
     #[inline]
-    fn new(end: E) -> Self {
+    pub(crate) fn new(end: E) -> Self {
         PushDestination {
             end,
             buffer: CountedBits::new(),
@@ -2036,6 +2128,57 @@ mod tests {
 
             let mut str = str_2();
             str &= str_1();
+            assert_bitstring!(str, expected_result());
+        }
+    }
+
+    mod bitor {
+        use crate::BitString;
+
+        fn str_1() -> BitString {
+            bitstring!("1100_11001100")
+        }
+
+        fn str_2() -> BitString {
+            bitstring!("10_10101010__1010_10101010")
+        }
+
+        fn expected_result() -> BitString {
+            bitstring!("10_10101010__1110_11101110")
+        }
+
+        #[test]
+        fn binary_operation() {
+            assert_bitstring!(str_1() | str_1(), str_1());
+            assert_bitstring!(str_2() | str_2(), str_2());
+
+            assert_bitstring!(str_1() | str_2(), expected_result());
+            assert_bitstring!(str_1() | str_2().as_bit_str(), expected_result());
+            assert_bitstring!(str_1() | str_2().as_bit_str_mut(), expected_result());
+            assert_bitstring!(str_1().as_bit_str() | str_2(), expected_result());
+            assert_bitstring!(str_1().as_bit_str_mut() | str_2(), expected_result());
+        }
+
+        #[test]
+        fn assign() {
+            let mut str = str_1();
+            str |= str_1();
+            assert_bitstring!(str, str_1());
+
+            let mut str = str_1();
+            str |= str_2();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_1();
+            str |= str_2().as_bit_str();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_1();
+            str |= str_2().as_bit_str_mut();
+            assert_bitstring!(str, expected_result());
+
+            let mut str = str_2();
+            str |= str_1();
             assert_bitstring!(str, expected_result());
         }
     }
