@@ -135,7 +135,7 @@ impl<S: BitSource> From<S> for BitString {
         buffer.resize(buffer_elems, 0u8);
 
         let bit_ptr = BitPointer::new_normalized(buffer.as_mut().into(), 0);
-        unsafe { source.copy_bits_to(bit_ptr) };
+        unsafe { source.copy_bits_to_bit_ptr(bit_ptr) };
 
         BitString {
             buffer,
@@ -530,7 +530,7 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
 
         let bit_ptr =
             BitPointer::new_normalized(Pointer::from(self.0.buffer.as_ref()), updated_offset);
-        unsafe { source.copy_bits_to(bit_ptr) };
+        unsafe { source.copy_bits_to_bit_ptr(bit_ptr) };
 
         self.0.bit_count += pushed_bits_count;
     }
@@ -591,7 +591,7 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
             Pointer::from(self.0.buffer.as_mut()),
             self.0.offset.value() + self.0.bit_count,
         );
-        unsafe { source.copy_bits_to(bit_ptr) };
+        unsafe { source.copy_bits_to_bit_ptr(bit_ptr) };
 
         self.0.bit_count += pushed_bits_count;
     }

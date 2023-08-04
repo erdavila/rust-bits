@@ -31,7 +31,7 @@ pub(crate) fn required_bytes(offset: Offset, bit_count: usize) -> usize {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct CountedBits<P: BitsPrimitive> {
+pub struct CountedBits<P: BitsPrimitive> {
     pub(crate) bits: P,
     pub(crate) count: usize,
 }

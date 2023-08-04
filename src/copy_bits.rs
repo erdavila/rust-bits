@@ -5,7 +5,7 @@ use crate::ref_encoding::pointer::Pointer;
 use crate::utils::{BitPattern, CountedBits};
 use crate::{BitValue, BitsPrimitive};
 
-pub(crate) trait Destination {
+pub trait Destination {
     fn write(&mut self, bits: CountedBits<u8>);
     fn write_remainder(self);
 }
@@ -49,7 +49,7 @@ pub(crate) fn copy_bits_loop(
     dst.write_remainder();
 }
 
-struct PrimitivesSource<P: BitsPrimitive> {
+pub(crate) struct PrimitivesSource<P: BitsPrimitive> {
     ptr: Pointer<P>,
     offset: usize,
     bit_count: usize,
@@ -57,7 +57,7 @@ struct PrimitivesSource<P: BitsPrimitive> {
 }
 impl PrimitivesSource<u8> {
     #[inline]
-    unsafe fn bits(bit_ptr: BitPointer, bit_count: usize) -> Self {
+    pub(crate) unsafe fn bits(bit_ptr: BitPointer, bit_count: usize) -> Self {
         PrimitivesSource {
             ptr: bit_ptr.byte_ptr(),
             offset: bit_ptr.offset().value(),
@@ -67,9 +67,8 @@ impl PrimitivesSource<u8> {
     }
 }
 impl<P: BitsPrimitive> PrimitivesSource<P> {
-    #[cfg(test)]
     #[inline]
-    unsafe fn primitives(ptr: Pointer<P>, count: usize) -> Self {
+    pub(crate) unsafe fn primitives(ptr: Pointer<P>, count: usize) -> Self {
         Self::primitives_partial(ptr, count * P::BIT_COUNT)
     }
 
