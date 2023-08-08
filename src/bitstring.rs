@@ -5,7 +5,9 @@ use std::hash::Hash;
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Deref, DerefMut};
+use std::ops::{
+    Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Deref, DerefMut,
+};
 use std::slice;
 use std::str::FromStr;
 
@@ -614,6 +616,51 @@ macro_rules! impl_bit_op {
 impl_bit_op!(BitAnd::bitand, BitAndAssign::bitand_assign; &, &=);
 impl_bit_op!(BitOr::bitor, BitOrAssign::bitor_assign; |, |=);
 impl_bit_op!(BitXor::bitxor, BitXorAssign::bitxor_assign; ^, ^=);
+
+impl Add for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: Self) -> Self::Output {
+        self.as_bit_str() + rhs
+    }
+}
+
+impl Add<&BitStr> for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: &BitStr) -> Self::Output {
+        self.as_bit_str() + rhs
+    }
+}
+
+impl Add<&mut BitStr> for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: &mut BitStr) -> Self::Output {
+        self.as_bit_str() + rhs
+    }
+}
+
+impl Add<BitString> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: BitString) -> Self::Output {
+        self + rhs.as_bit_str()
+    }
+}
+
+impl Add<BitString> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: BitString) -> Self::Output {
+        self + rhs.as_bit_str()
+    }
+}
 
 pub(crate) struct PushDestination<'a, E: BitStringEnd<'a>> {
     end: E,
@@ -2432,5 +2479,24 @@ mod tests {
             assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(20), 20, 12);
             assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(21), 28, 12);
         }
+    }
+
+    #[test]
+    fn add() {
+        fn str_1() -> BitString {
+            bitstring!("101001")
+        }
+
+        fn str_2() -> BitString {
+            bitstring!("0011")
+        }
+
+        let expected_result = bitstring!("1010010011");
+
+        assert_bitstring!(str_1() + str_2(), expected_result);
+        assert_bitstring!(str_1() + str_2().as_bit_str(), expected_result);
+        assert_bitstring!(str_1() + str_2().as_bit_str_mut(), expected_result);
+        assert_bitstring!(str_1().as_bit_str() + str_2(), expected_result);
+        assert_bitstring!(str_1().as_bit_str_mut() + str_2(), expected_result);
     }
 }

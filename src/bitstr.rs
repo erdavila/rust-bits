@@ -1,7 +1,7 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
 use std::ops::{
-    BitAnd, BitOr, BitXor, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull,
+    Add, BitAnd, BitOr, BitXor, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull,
     RangeInclusive, RangeTo, RangeToInclusive,
 };
 
@@ -658,6 +658,48 @@ impl_bit_op!(BitAnd::bitand; &, &=);
 impl_bit_op!(BitOr::bitor; |, |=);
 impl_bit_op!(BitXor::bitxor; ^, ^=);
 
+impl Add<&BitStr> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: &BitStr) -> Self::Output {
+        let mut output = BitString::new();
+        output
+            .msb()
+            .set_reserved_space(SetReservedSpace::GrowTo(self.len() + rhs.len()));
+        output.msb().push(rhs);
+        output.msb().push(self);
+        output
+    }
+}
+
+impl Add<&mut BitStr> for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: &mut BitStr) -> Self::Output {
+        self + (rhs as &BitStr)
+    }
+}
+
+impl Add<&BitStr> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: &BitStr) -> Self::Output {
+        (self as &BitStr) + rhs
+    }
+}
+
+impl Add<&mut BitStr> for &mut BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn add(self, rhs: &mut BitStr) -> Self::Output {
+        (self as &BitStr) + rhs
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::convert::identity;
@@ -1101,5 +1143,20 @@ mod tests {
         );
 
         assert_bitstring!(str_2.as_bit_str() ^ str_1.as_bit_str(), expected_result);
+    }
+
+    #[test]
+    fn add() {
+        let mut str_1 = bitstring!("101001");
+        let mut str_2 = bitstring!("0011");
+        let expected_result = bitstring!("1010010011");
+
+        assert_bitstring!(str_1.as_bit_str() + str_2.as_bit_str(), expected_result);
+        assert_bitstring!(str_1.as_bit_str() + str_2.as_bit_str_mut(), expected_result);
+        assert_bitstring!(str_1.as_bit_str_mut() + str_2.as_bit_str(), expected_result);
+        assert_bitstring!(
+            str_1.as_bit_str_mut() + str_2.as_bit_str_mut(),
+            expected_result
+        );
     }
 }
