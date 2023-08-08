@@ -6,7 +6,7 @@ use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::{
-    Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Deref, DerefMut,
+    Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Deref, DerefMut, Not,
 };
 use std::slice;
 use std::str::FromStr;
@@ -493,6 +493,15 @@ impl BitStringParseError {
     #[inline]
     pub fn index(&self) -> usize {
         self.0
+    }
+}
+
+impl Not for BitString {
+    type Output = BitString;
+
+    #[inline]
+    fn not(self) -> Self::Output {
+        !self.as_bit_str()
     }
 }
 
@@ -2138,6 +2147,11 @@ mod tests {
         assert_format!(bit_string, ":#x", "0b110:0xc");
         assert_format!(bit_string, ":X", "110:C");
         assert_format!(bit_string, ":#X", "0b110:0xC");
+    }
+
+    #[test]
+    fn not() {
+        assert_bitstring!(!bitstring!("10010011"), bitstring!("01101100"));
     }
 
     mod bitand {

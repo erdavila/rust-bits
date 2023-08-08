@@ -612,6 +612,17 @@ impl<'a> PartialOrd for NumericValue<'a> {
     }
 }
 
+impl Not for &BitStr {
+    type Output = BitString;
+
+    #[inline]
+    fn not(self) -> Self::Output {
+        let mut output = BitString::from(self);
+        output.negate();
+        output
+    }
+}
+
 fn bit_op_impl<F>(lhs: &BitStr, rhs: &BitStr, op_assign: F) -> BitString
 where
     F: FnOnce(&mut BitString),
@@ -1092,6 +1103,16 @@ mod tests {
         bit_str.negate();
 
         assert_eq!(under, [0b1100_1010, 0b1010_0110]);
+    }
+
+    #[test]
+    fn not() {
+        let under = [0b0011_1010u8, 0b1010_1001u8];
+        let bit_str = &BitStr::new_ref(&under)[4..12]; // In memory: 10010011
+
+        let bit_string = !bit_str;
+
+        assert_bitstring!(bit_string, bitstring!("01101100"));
     }
 
     #[test]
