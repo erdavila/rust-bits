@@ -1,8 +1,8 @@
 use std::cmp::{self, Ordering};
 use std::hash::Hash;
 use std::ops::{
-    Add, BitAnd, BitOr, BitXor, Bound, Index, IndexMut, Range, RangeBounds, RangeFrom, RangeFull,
-    RangeInclusive, RangeTo, RangeToInclusive,
+    Add, BitAnd, BitOr, BitXor, Bound, Index, IndexMut, Not, Range, RangeBounds, RangeFrom,
+    RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
 
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
@@ -294,6 +294,23 @@ impl BitStr {
     #[inline]
     pub fn numeric_value(&self) -> NumericValue {
         NumericValue(self)
+    }
+
+    #[inline]
+    pub fn negate(&mut self) {
+        let result: Result<(), ()> = consume_iterator(
+            self.iter_mut(),
+            &mut (),
+            |_, byte| {
+                byte.modify(Not::not);
+                Ok(())
+            },
+            |_, bit| {
+                bit.modify(Not::not);
+                Ok(())
+            },
+        );
+        result.unwrap();
     }
 }
 
@@ -1065,6 +1082,16 @@ mod tests {
         let bit_string: BitString = bit_str.to_owned();
 
         assert_eq!(bit_string, "001001".parse::<BitString>().unwrap());
+    }
+
+    #[test]
+    fn negate() {
+        let mut under = [0b0011_1010u8, 0b1010_1001u8];
+        let bit_str = &mut BitStr::new_mut(&mut under)[4..12]; // In memory: 10010011
+
+        bit_str.negate();
+
+        assert_eq!(under, [0b1100_1010, 0b1010_0110]);
     }
 
     #[test]
