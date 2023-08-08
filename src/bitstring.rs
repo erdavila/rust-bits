@@ -9,7 +9,7 @@ use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, D
 use std::slice;
 use std::str::FromStr;
 
-use linear_deque::LinearDeque;
+use linear_deque::{self as ld, LinearDeque};
 
 use crate::copy_bits::{
     bit_values_source, copy_bits, copy_bits_loop, copy_bits_to_primitives, Destination,
@@ -41,6 +41,16 @@ impl BitString {
             offset: Offset::new(0),
             bit_count: 0,
         }
+    }
+
+    #[inline]
+    pub fn with_reserved_space(msb_reserved_space: usize, lsb_reserved_space: usize) -> Self {
+        let mut output = Self::new();
+        output.set_reserved_space(
+            SetReservedSpace::GrowTo(msb_reserved_space),
+            SetReservedSpace::GrowTo(lsb_reserved_space),
+        );
+        output
     }
 
     #[inline]
@@ -83,6 +93,45 @@ impl BitString {
     #[inline]
     pub fn msb(&mut self) -> impl BitStringEnd {
         BitStringMsbEnd(self)
+    }
+
+    #[inline]
+    pub fn lsb_reserved_space(&self) -> usize {
+        self.buffer.reserved_front_space() * u8::BIT_COUNT + self.offset.value()
+    }
+
+    #[inline]
+    pub fn msb_reserved_space(&self) -> usize {
+        self.buffer.reserved_back_space() * u8::BIT_COUNT + self.offset_from_end()
+    }
+
+    pub fn set_reserved_space(&mut self, msb: SetReservedSpace, lsb: SetReservedSpace) {
+        fn bytes_setting(
+            bits_setting: SetReservedSpace,
+            rel_offset: usize,
+        ) -> ld::SetReservedSpace {
+            let bytes_len = |len: usize| match len.checked_sub(rel_offset) {
+                Some(len) => required_bytes(Offset::new(0), len),
+                None => 0,
+            };
+
+            match bits_setting {
+                SetReservedSpace::GrowTo(len) => ld::SetReservedSpace::GrowTo(bytes_len(len)),
+                SetReservedSpace::ShrinkTo(len) => ld::SetReservedSpace::ShrinkTo(bytes_len(len)),
+                SetReservedSpace::Nearly(len) => ld::SetReservedSpace::Exact(bytes_len(len)),
+                SetReservedSpace::Keep => ld::SetReservedSpace::Keep,
+            }
+        }
+
+        let front = bytes_setting(lsb, self.offset.value());
+        let back = bytes_setting(msb, self.offset_from_end());
+
+        self.buffer.set_reserved_space(front, back);
+    }
+
+    #[inline]
+    fn offset_from_end(&self) -> usize {
+        self.buffer.len() * u8::BIT_COUNT - self.offset.value() - self.bit_count
     }
 }
 
@@ -618,6 +667,8 @@ pub trait BitStringEnd<'a> {
     }
 
     fn resize(&mut self, new_len: usize, value: BitValue);
+    fn reserved_space(&self) -> usize;
+    fn set_reserved_space(&mut self, set_reserved_space: SetReservedSpace);
 
     fn bit_string(&mut self) -> &mut BitString;
 }
@@ -692,6 +743,17 @@ impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
                 self.0.bit_count = new_len;
             }
         }
+    }
+
+    #[inline]
+    fn reserved_space(&self) -> usize {
+        self.0.lsb_reserved_space()
+    }
+
+    #[inline]
+    fn set_reserved_space(&mut self, set_reserved_space: SetReservedSpace) {
+        self.0
+            .set_reserved_space(SetReservedSpace::Keep, set_reserved_space);
     }
 
     #[inline]
@@ -771,6 +833,17 @@ impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
     }
 
     #[inline]
+    fn reserved_space(&self) -> usize {
+        self.0.msb_reserved_space()
+    }
+
+    #[inline]
+    fn set_reserved_space(&mut self, set_reserved_space: SetReservedSpace) {
+        self.0
+            .set_reserved_space(set_reserved_space, SetReservedSpace::Keep);
+    }
+
+    #[inline]
     fn bit_string(&mut self) -> &mut BitString {
         self.0
     }
@@ -839,6 +912,14 @@ fn get_bit_string_from_bit_str(bit_ptr: BitPointer, bit_count: usize) -> BitStri
         offset,
         bit_count,
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SetReservedSpace {
+    GrowTo(usize),
+    ShrinkTo(usize),
+    Nearly(usize),
+    Keep,
 }
 
 pub struct IntoIter {
@@ -2162,6 +2243,194 @@ mod tests {
             let mut str = str_2();
             str ^= str_1();
             assert_bitstring!(str, expected_result());
+        }
+    }
+
+    mod reserved_space {
+        use linear_deque as ld;
+
+        use crate::ref_encoding::offset::Offset;
+        use crate::SetReservedSpace::{self, GrowTo, Nearly, ShrinkTo};
+        use crate::{BitString, BitStringEnd};
+
+        #[test]
+        fn with_reserved_space() {
+            let bit_string = BitString::with_reserved_space(5, 9);
+
+            assert_eq!(bit_string.msb_reserved_space(), 8);
+            assert_eq!(bit_string.lsb_reserved_space(), 16);
+        }
+
+        #[test]
+        fn when_empty() {
+            let mut bit_string = BitString::new();
+
+            bit_string.set_reserved_space(SetReservedSpace::GrowTo(5), SetReservedSpace::GrowTo(9));
+
+            assert_eq!(bit_string.msb_reserved_space(), 8);
+            assert_eq!(bit_string.lsb_reserved_space(), 16);
+        }
+
+        // |--|--|AB|--|--|
+        macro_rules! aligned_bit_string {
+            () => {{
+                let bit_string = BitString {
+                    buffer: {
+                        let mut buffer = ld::LinearDeque::from([0xAB]);
+                        buffer.set_reserved_space(
+                            ld::SetReservedSpace::Exact(2),
+                            ld::SetReservedSpace::Exact(2),
+                        );
+                        buffer
+                    },
+                    offset: Offset::new(0),
+                    bit_count: 8,
+                };
+
+                assert_eq!(bit_string.lsb_reserved_space(), 16, "lsb_reserved_space");
+                assert_eq!(bit_string.msb_reserved_space(), 16, "msb_reserved_space");
+                assert_bitstring!(bit_string, bitstring!("0xAB"));
+
+                bit_string
+            }};
+        }
+
+        // |--|-A|B-|--|
+        macro_rules! unaligned_bit_string {
+            () => {{
+                let mut bit_string = BitString {
+                    buffer: {
+                        let mut buffer = ld::LinearDeque::from([0xB0, 0x0A]);
+                        buffer.set_reserved_space(
+                            ld::SetReservedSpace::Exact(1),
+                            ld::SetReservedSpace::Exact(1),
+                        );
+                        buffer
+                    },
+                    offset: Offset::new(4),
+                    bit_count: 8,
+                };
+
+                assert_eq!(bit_string.lsb().reserved_space(), 12);
+                assert_eq!(bit_string.msb().reserved_space(), 12);
+                assert_bitstring!(bit_string, bitstring!("0xAB"));
+
+                bit_string
+            }};
+        }
+
+        macro_rules! assert_reserved_space {
+            ($bit_string:expr, $end:ident, $change:expr, $expected_msb_reserved_space:expr, $expected_lsb_reserved_space:expr) => {
+                let mut bit_string = $bit_string;
+
+                bit_string.$end().set_reserved_space($change);
+
+                assert_eq!(
+                    bit_string.lsb().reserved_space(),
+                    $expected_lsb_reserved_space
+                );
+                assert_eq!(
+                    bit_string.msb().reserved_space(),
+                    $expected_msb_reserved_space
+                );
+                assert_bitstring!(bit_string, bitstring!("0xAB"))
+            };
+        }
+
+        #[test]
+        fn aligned_shrink_to() {
+            assert_reserved_space!(aligned_bit_string!(), lsb, ShrinkTo(0), 16, 0);
+            assert_reserved_space!(aligned_bit_string!(), lsb, ShrinkTo(1), 16, 8);
+            assert_reserved_space!(aligned_bit_string!(), lsb, ShrinkTo(8), 16, 8);
+            assert_reserved_space!(aligned_bit_string!(), lsb, ShrinkTo(9), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), lsb, ShrinkTo(16), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), lsb, ShrinkTo(17), 16, 16);
+
+            assert_reserved_space!(aligned_bit_string!(), msb, ShrinkTo(0), 0, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, ShrinkTo(1), 8, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, ShrinkTo(8), 8, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, ShrinkTo(9), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, ShrinkTo(16), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, ShrinkTo(17), 16, 16);
+        }
+
+        #[test]
+        fn aligned_grow_to() {
+            assert_reserved_space!(aligned_bit_string!(), lsb, GrowTo(15), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), lsb, GrowTo(16), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), lsb, GrowTo(17), 16, 24);
+            assert_reserved_space!(aligned_bit_string!(), lsb, GrowTo(24), 16, 24);
+            assert_reserved_space!(aligned_bit_string!(), lsb, GrowTo(25), 16, 32);
+
+            assert_reserved_space!(aligned_bit_string!(), msb, GrowTo(15), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, GrowTo(16), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, GrowTo(17), 24, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, GrowTo(24), 24, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, GrowTo(25), 32, 16);
+        }
+
+        #[test]
+        fn aligned_nearly() {
+            assert_reserved_space!(aligned_bit_string!(), lsb, Nearly(8), 16, 8);
+            assert_reserved_space!(aligned_bit_string!(), lsb, Nearly(9), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), lsb, Nearly(16), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), lsb, Nearly(17), 16, 24);
+
+            assert_reserved_space!(aligned_bit_string!(), msb, Nearly(8), 8, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, Nearly(9), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, Nearly(16), 16, 16);
+            assert_reserved_space!(aligned_bit_string!(), msb, Nearly(17), 24, 16);
+        }
+
+        #[test]
+        fn unaligned_shrink_to() {
+            assert_reserved_space!(unaligned_bit_string!(), lsb, ShrinkTo(0), 12, 4);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, ShrinkTo(4), 12, 4);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, ShrinkTo(5), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, ShrinkTo(12), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, ShrinkTo(13), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, ShrinkTo(20), 12, 12);
+
+            assert_reserved_space!(unaligned_bit_string!(), msb, ShrinkTo(0), 4, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, ShrinkTo(4), 4, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, ShrinkTo(5), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, ShrinkTo(12), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, ShrinkTo(13), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, ShrinkTo(20), 12, 12);
+        }
+
+        #[test]
+        fn unaligned_grow_to() {
+            assert_reserved_space!(unaligned_bit_string!(), lsb, GrowTo(0), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, GrowTo(12), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, GrowTo(13), 12, 20);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, GrowTo(20), 12, 20);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, GrowTo(21), 12, 28);
+
+            assert_reserved_space!(unaligned_bit_string!(), msb, GrowTo(0), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, GrowTo(12), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, GrowTo(13), 20, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, GrowTo(20), 20, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, GrowTo(21), 28, 12);
+        }
+
+        #[test]
+        fn unaligned_nearly() {
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(0), 12, 4);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(4), 12, 4);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(5), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(12), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(13), 12, 20);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(20), 12, 20);
+            assert_reserved_space!(unaligned_bit_string!(), lsb, Nearly(21), 12, 28);
+
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(0), 4, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(4), 4, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(5), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(12), 12, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(13), 20, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(20), 20, 12);
+            assert_reserved_space!(unaligned_bit_string!(), msb, Nearly(21), 28, 12);
         }
     }
 }

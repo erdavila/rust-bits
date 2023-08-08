@@ -5,16 +5,13 @@ use std::ops::{
     RangeInclusive, RangeTo, RangeToInclusive,
 };
 
-use linear_deque::SetReservedSpace;
-
 use crate::iter::{BitIterator, Iter, IterMut, IterRef, RawIter};
 use crate::ref_encoding::bit_pointer::BitPointer;
-use crate::ref_encoding::offset::Offset;
 use crate::ref_encoding::{RefComponents, RefRepr};
-use crate::utils::{required_bytes, CountedBits, Either};
+use crate::utils::{CountedBits, Either};
 use crate::{
     Bit, BitAccessor, BitString, BitStringEnd, BitValue, BitsPrimitive, Primitive,
-    PrimitiveAccessor,
+    PrimitiveAccessor, SetReservedSpace,
 };
 
 mod fmt;
@@ -605,10 +602,9 @@ where
     let mut output = BitString::new();
 
     let bit_count = cmp::max(lhs.len(), rhs.len());
-    let byte_count = required_bytes(Offset::new(0), bit_count);
     output
-        .buffer
-        .set_reserved_space(SetReservedSpace::Keep, SetReservedSpace::GrowTo(byte_count));
+        .msb()
+        .set_reserved_space(SetReservedSpace::GrowTo(bit_count));
 
     output.msb().push(lhs);
     op_assign(&mut output);
