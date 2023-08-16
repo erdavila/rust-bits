@@ -27,7 +27,8 @@ macro_rules! assert_bitstring {
         let bit_string: &$crate::BitString = &$value;
         assert_eq!(
             bit_string.buffer.len(),
-            $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count)
+            $crate::utils::required_bytes(bit_string.offset, bit_string.bit_count),
+            "used bytes count"
         );
         assert_eq!(*bit_string, $expected);
     }};

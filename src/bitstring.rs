@@ -104,36 +104,40 @@ impl BitString {
 
     #[inline]
     pub fn msb_reserved_space(&self) -> usize {
-        self.buffer.reserved_back_space() * u8::BIT_COUNT + self.offset_from_end()
+        (self.buffer.reserved_back_space() + self.buffer.len()) * u8::BIT_COUNT
+            - self.offset.value()
+            - self.bit_count
     }
 
     pub fn set_reserved_space(&mut self, msb: SetReservedSpace, lsb: SetReservedSpace) {
-        fn bytes_setting(
-            bits_setting: SetReservedSpace,
-            rel_offset: usize,
+        fn convert_set_reserved_space<F: FnOnce(usize) -> usize>(
+            setting: SetReservedSpace,
+            f: F,
         ) -> ld::SetReservedSpace {
-            let bytes_len = |len: usize| match len.checked_sub(rel_offset) {
-                Some(len) => required_bytes(Offset::new(0), len),
-                None => 0,
-            };
-
-            match bits_setting {
-                SetReservedSpace::GrowTo(len) => ld::SetReservedSpace::GrowTo(bytes_len(len)),
-                SetReservedSpace::ShrinkTo(len) => ld::SetReservedSpace::ShrinkTo(bytes_len(len)),
-                SetReservedSpace::Nearly(len) => ld::SetReservedSpace::Exact(bytes_len(len)),
+            match setting {
+                SetReservedSpace::GrowTo(len) => ld::SetReservedSpace::GrowTo(f(len)),
+                SetReservedSpace::ShrinkTo(len) => ld::SetReservedSpace::ShrinkTo(f(len)),
+                SetReservedSpace::Nearly(len) => ld::SetReservedSpace::Exact(f(len)),
                 SetReservedSpace::Keep => ld::SetReservedSpace::Keep,
             }
         }
 
-        let front = bytes_setting(lsb, self.offset.value());
-        let back = bytes_setting(msb, self.offset_from_end());
+        let front = convert_set_reserved_space(lsb, |bits_len| {
+            match bits_len.checked_sub(self.offset.value()) {
+                Some(len) => required_bytes(Offset::new(0), len),
+                None => 0,
+            }
+        });
+
+        let back = convert_set_reserved_space(msb, |bits_len| -> usize {
+            let data_and_reserved_msb_bit_count = self.offset.value() + self.bit_count + bits_len;
+            let data_and_reserved_back_byte_count =
+                required_bytes(Offset::new(0), data_and_reserved_msb_bit_count);
+            let data_byte_count = required_bytes(self.offset, self.bit_count);
+            data_and_reserved_back_byte_count - data_byte_count
+        });
 
         self.buffer.set_reserved_space(front, back);
-    }
-
-    #[inline]
-    fn offset_from_end(&self) -> usize {
-        self.buffer.len() * u8::BIT_COUNT - self.offset.value() - self.bit_count
     }
 }
 
@@ -736,11 +740,30 @@ impl<'a> BitStringLsbEnd<'a> {
             let bit_ptr = BitPointer::new(self.0.buffer.as_ref().into(), self.0.offset);
             let value = f(bit_ptr, bit_count);
 
-            self.0.offset = Offset::new(self.0.offset.value() + bit_count);
-            self.0.bit_count -= bit_count;
+            let resulting_bit_count = self.0.bit_count - bit_count;
 
-            let byte_count = required_bytes(self.0.offset, self.0.bit_count);
-            self.0.buffer.resize_at_front(byte_count, 0);
+            let remove_bits = |bit_string: &mut BitString| {
+                let updated_offset = Offset::new(bit_string.offset.value() + bit_count);
+                let updated_byte_count = required_bytes(updated_offset, resulting_bit_count);
+
+                bit_string.offset = updated_offset;
+                bit_string.bit_count = resulting_bit_count;
+                bit_string.buffer.resize_at_front(updated_byte_count, 0u8);
+            };
+
+            if resulting_bit_count == 0 {
+                let reserved_lsb = self.0.lsb_reserved_space();
+                let reserved_msb = self.0.msb_reserved_space();
+
+                remove_bits(self.0);
+
+                self.0.set_reserved_space(
+                    SetReservedSpace::Nearly(reserved_msb),
+                    SetReservedSpace::Nearly(reserved_lsb + bit_count),
+                );
+            } else {
+                remove_bits(self.0);
+            }
 
             value
         })
@@ -749,22 +772,27 @@ impl<'a> BitStringLsbEnd<'a> {
 impl<'a> BitStringEnd<'a> for BitStringLsbEnd<'a> {
     fn push<S: BitSource>(&mut self, source: S) {
         let pushed_bits_count = source.bit_count();
-        let space = self.0.offset.value();
 
-        let mut updated_offset = self.0.offset.value();
-        if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
+        if self.0.bit_count == 0 && self.0.offset.value() > 0 {
+            self.0.buffer.push_back(0u8);
+        }
+
+        let buffer_unused_bit_count = self.0.offset.value();
+        let additional_elems_bit_count = if let Some(additional_elems_bit_count) =
+            pushed_bits_count.checked_sub(buffer_unused_bit_count)
+        {
             let additional_elems = required_bytes(Offset::new(0), additional_elems_bit_count);
             self.0
                 .buffer
                 .resize_at_front(self.0.buffer.len() + additional_elems, 0u8);
-            updated_offset += additional_elems * u8::BIT_COUNT;
-        }
-        updated_offset -= pushed_bits_count;
+            additional_elems * u8::BIT_COUNT
+        } else {
+            0
+        };
+        self.0.offset =
+            Offset::new(self.0.offset.value() + additional_elems_bit_count - pushed_bits_count);
 
-        self.0.offset = Offset::new(updated_offset);
-
-        let bit_ptr =
-            BitPointer::new_normalized(Pointer::from(self.0.buffer.as_ref()), updated_offset);
+        let bit_ptr = BitPointer::new(Pointer::from(self.0.buffer.as_ref()), self.0.offset);
         unsafe { source.copy_bits_to_bit_ptr(bit_ptr) };
 
         self.0.bit_count += pushed_bits_count;
@@ -840,9 +868,16 @@ impl<'a> BitStringMsbEnd<'a> {
 impl<'a> BitStringEnd<'a> for BitStringMsbEnd<'a> {
     fn push<S: BitSource>(&mut self, source: S) {
         let pushed_bits_count = source.bit_count();
-        let space = self.0.buffer.len() * u8::BIT_COUNT - self.0.offset.value() - self.0.len();
 
-        if let Some(additional_elems_bit_count) = pushed_bits_count.checked_sub(space) {
+        if self.0.bit_count == 0 && self.0.offset.value() > 0 {
+            self.0.buffer.push_back(0u8);
+        }
+
+        let buffer_unused_bit_count =
+            self.0.buffer.len() * u8::BIT_COUNT - self.0.offset.value() - self.0.bit_count;
+        if let Some(additional_elems_bit_count) =
+            pushed_bits_count.checked_sub(buffer_unused_bit_count)
+        {
             let additional_elems = required_bytes(Offset::new(0), additional_elems_bit_count);
             self.0
                 .buffer
@@ -2512,5 +2547,171 @@ mod tests {
         assert_bitstring!(str_1() + str_2().as_bit_str_mut(), expected_result);
         assert_bitstring!(str_1().as_bit_str() + str_2(), expected_result);
         assert_bitstring!(str_1().as_bit_str_mut() + str_2(), expected_result);
+    }
+
+    mod empty_with_non_zero_offset {
+        use crate::BitValue::One;
+        use crate::{BitString, BitStringEnd, SetReservedSpace};
+
+        macro_rules! assert_reserved_spaces {
+            ($bit_string:expr, $expected_bit_string:literal, $expected_msb_reserved_space:expr, $expected_lsb_reserved_space:expr) => {
+                let bit_string = $bit_string;
+                assert_bitstring!(bit_string, bitstring!($expected_bit_string));
+                assert_eq!(
+                    bit_string.msb_reserved_space(),
+                    $expected_msb_reserved_space,
+                    "msb_reserved_space"
+                );
+                assert_eq!(
+                    bit_string.lsb_reserved_space(),
+                    $expected_lsb_reserved_space,
+                    "lsb_reserved_space"
+                );
+            };
+        }
+
+        enum End {
+            Msb,
+            Lsb,
+        }
+
+        fn new_empty_bit_string_with_non_zero_offset_after_pop_at(end: End) -> BitString {
+            let mut bit_string = BitString::from(0u8);
+            // |[00000000]|
+            bit_string.set_reserved_space(SetReservedSpace::GrowTo(8), SetReservedSpace::GrowTo(8));
+            // |--------|[00000000]|--------|
+
+            match end {
+                End::Msb => {
+                    bit_string.lsb().pop_n(5);
+                    // |--------|[000]-----|--------|
+                    bit_string.msb().pop_n(3);
+                }
+                End::Lsb => {
+                    bit_string.msb().pop_n(3);
+                    // |--------|---[00000]|--------|
+                    bit_string.lsb().pop_n(5);
+                }
+            }
+
+            // |--------|---[]-----|--------|
+            bit_string
+        }
+
+        fn new_empty_bit_string_with_non_zero_offset() -> BitString {
+            new_empty_bit_string_with_non_zero_offset_after_pop_at(End::Msb)
+        }
+
+        #[test]
+        fn msb_pop() {
+            let bit_string = new_empty_bit_string_with_non_zero_offset_after_pop_at(End::Msb);
+
+            // |--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 13);
+        }
+
+        #[test]
+        fn lsb_pop() {
+            let bit_string = new_empty_bit_string_with_non_zero_offset_after_pop_at(End::Lsb);
+
+            // |--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 13);
+        }
+
+        #[test]
+        fn msb_push() {
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+
+            bit_string.msb().push(One);
+
+            // |--------|--[1]-----|--------|
+            assert_reserved_spaces!(bit_string, "1", 10, 13);
+        }
+
+        #[test]
+        fn lsb_push() {
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+
+            bit_string.lsb().push(One);
+
+            // |--------|---[1]----|--------|
+            assert_reserved_spaces!(bit_string, "1", 11, 12);
+        }
+
+        #[test]
+        fn set_msb_reserved_space() {
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .msb()
+                .set_reserved_space(SetReservedSpace::ShrinkTo(0));
+            // |---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 3, 13);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .msb()
+                .set_reserved_space(SetReservedSpace::ShrinkTo(3));
+            // |---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 3, 13);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .msb()
+                .set_reserved_space(SetReservedSpace::ShrinkTo(4));
+            // |--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 13);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .msb()
+                .set_reserved_space(SetReservedSpace::Nearly(11));
+            // |--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 13);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .msb()
+                .set_reserved_space(SetReservedSpace::GrowTo(12));
+            // |--------|--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 19, 13);
+        }
+
+        #[test]
+        fn set_lsb_reserved_space() {
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .lsb()
+                .set_reserved_space(SetReservedSpace::ShrinkTo(0));
+            // |--------|---[]-----|
+            assert_reserved_spaces!(bit_string, "", 11, 5);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .lsb()
+                .set_reserved_space(SetReservedSpace::ShrinkTo(5));
+            // |--------|---[]-----|
+            assert_reserved_spaces!(bit_string, "", 11, 5);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .lsb()
+                .set_reserved_space(SetReservedSpace::ShrinkTo(6));
+            // |--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 13);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .lsb()
+                .set_reserved_space(SetReservedSpace::Nearly(13));
+            // |--------|---[]-----|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 13);
+
+            let mut bit_string = new_empty_bit_string_with_non_zero_offset();
+            bit_string
+                .lsb()
+                .set_reserved_space(SetReservedSpace::GrowTo(14));
+            // |--------|---[]-----|--------|--------|
+            assert_reserved_spaces!(bit_string, "", 11, 21);
+        }
     }
 }
