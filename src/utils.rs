@@ -174,7 +174,11 @@ impl<P: BitsPrimitive> BitPattern<P> {
 
     #[inline]
     pub(crate) fn and_zeros(self, bit_count: usize) -> Self {
-        BitPattern(self.0 << bit_count)
+        if bit_count >= P::BIT_COUNT {
+            BitPattern(P::ZERO)
+        } else {
+            BitPattern(self.0 << bit_count)
+        }
     }
 
     #[inline]

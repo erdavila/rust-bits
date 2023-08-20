@@ -45,6 +45,14 @@ impl BitString {
         }
     }
 
+    pub fn repeat(value: BitValue, bit_count: usize) -> Self {
+        let source = RepeatedBitSource {
+            value,
+            count: bit_count,
+        };
+        Self::from(source)
+    }
+
     #[inline]
     pub fn with_reserved_space(msb_reserved_space: usize, lsb_reserved_space: usize) -> Self {
         let mut output = Self::new();
@@ -983,7 +991,7 @@ impl Iterator for RepeatedBitSource {
         (self.count > 0).then(|| {
             let count = cmp::min(self.count, u8::BIT_COUNT);
             let bits = match self.value {
-                BitValue::Zero => 0,
+                BitValue::Zero => 0u8,
                 BitValue::One => BitPattern::new_with_zeros().and_ones(count).get(),
             };
             self.count -= count;
@@ -1127,6 +1135,17 @@ mod tests {
         let string: BitString = BitString::new();
 
         assert_eq!(string.len(), 0);
+    }
+
+    #[test]
+    fn repeat() {
+        assert_bitstring!(BitString::repeat(Zero, 0), bitstring!(""));
+        assert_bitstring!(BitString::repeat(Zero, 1), bitstring!("0"));
+        assert_bitstring!(BitString::repeat(Zero, 8), bitstring!("00000000"));
+
+        assert_bitstring!(BitString::repeat(One, 0), bitstring!(""));
+        assert_bitstring!(BitString::repeat(One, 1), bitstring!("1"));
+        assert_bitstring!(BitString::repeat(One, 8), bitstring!("11111111"));
     }
 
     #[test]
